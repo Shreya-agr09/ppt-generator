@@ -1,0 +1,48 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Markdown → PowerPoint</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; margin: 2rem; }
+    textarea { width: 100%; height: 260px; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .row { display: flex; gap: 1rem; align-items: center; flex-wrap: wrap; }
+    .card { padding: 1rem; border: 1px solid #ddd; border-radius: 12px; margin-top: 1rem; }
+    button { padding: .7rem 1.1rem; border: none; border-radius: 10px; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <h1>Markdown → PowerPoint</h1>
+  <form id="f" method="post" action="/api/convert" enctype="multipart/form-data">
+    <div class="card">
+      <label><b>Paste text / markdown</b></label>
+      <textarea name="content" placeholder="# Title\n\n- Bullet 1\n  - Sub bullet\n```python\nprint('hi')\n```"></textarea>
+      <div class="row">
+        <label>…or upload a .md file:</label>
+        <input type="file" name="markdown_file" accept=".md,text/markdown"/>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="row">
+        <label><b>Template</b></label>
+        <select name="template_id">
+          <option value="">(None / default)</option>
+          {% for t in builtin_templates %}
+          <option value="{{ t }}">{{ t }}</option>
+          {% endfor %}
+        </select>
+        <span>or upload .pptx</span>
+        <input type="file" name="template" accept=".pptx"/>
+      </div>
+      <div class="row">
+        <label>Max bullets per slide</label>
+        <input type="number" name="max_bullets_per_slide" value="8" min="3" max="20"/>
+      </div>
+    </div>
+
+    <button type="submit">Generate .pptx</button>
+  </form>
+</body>
+</html>

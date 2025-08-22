@@ -27,6 +27,35 @@ MD_IMG = re.compile(r"!\[[^\]]*\]\(([^)]+)\)")
 MD_TABLE_DIV = re.compile(r"^\s*\|")
 MD_CODE_FENCE = re.compile(r"^\s*```")
 
+from pptx.util import Pt, Inches
+
+def add_slide(prs, title_text, body_lines, is_title_slide=False):
+    if is_title_slide:
+        slide_layout = prs.slide_layouts[0]
+    else:
+        slide_layout = prs.slide_layouts[1]
+
+    slide = prs.slides.add_slide(slide_layout)
+
+    if slide.shapes.title:
+        slide.shapes.title.text = title_text
+
+    textbox = slide.shapes.add_textbox(Inches(1), Inches(2), Inches(8), Inches(4))
+    tf = textbox.text_frame
+    for line in body_lines:
+        p = tf.add_paragraph()
+        if line.startswith("CODE:"):
+            p.text = line.replace("CODE:", "")
+            p.font.name = "Courier New"
+            p.font.size = Pt(16)
+        elif line.startswith("• "):
+            p.text = line[2:]
+            p.level = 0
+            p.font.size = Pt(18)
+        else:
+            p.text = line
+            p.font.size = Pt(18)
+
 def parse_markdown_to_slides(md: str, max_bullets_per_slide: int = 8) -> List[SlideSpec]:
     lines = md.splitlines()
     slides: List[SlideSpec] = []

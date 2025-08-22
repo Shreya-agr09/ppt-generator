@@ -1,48 +1,358 @@
-<!doctype html>
-<html>
+<!DOCTYPE html>
+<html lang="en">
 <head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>Markdown → PowerPoint</title>
-  <style>
-    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; margin: 2rem; }
-    textarea { width: 100%; height: 260px; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
-    .row { display: flex; gap: 1rem; align-items: center; flex-wrap: wrap; }
-    .card { padding: 1rem; border: 1px solid #ddd; border-radius: 12px; margin-top: 1rem; }
-    button { padding: .7rem 1.1rem; border: none; border-radius: 10px; cursor: pointer; }
-  </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Text to PowerPoint Converter</title>
+    <style>
+        :root {
+            --primary-color: #4285f4;
+            --secondary-color: #34a853;
+            --accent-color: #ea4335;
+            --light-gray: #f5f5f5;
+            --dark-gray: #444;
+        }
+        
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background-color: #f9f9f9;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+            padding: 30px;
+        }
+        
+        header {
+            text-align: center;
+            margin-bottom: 30px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid #eee;
+        }
+        
+        h1 {
+            color: var(--primary-color);
+            margin-bottom: 10px;
+        }
+        
+        .subtitle {
+            color: var(--dark-gray);
+            font-weight: normal;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: var(--dark-gray);
+        }
+        
+        textarea, input[type="text"], select {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 16px;
+            transition: border 0.3s;
+        }
+        
+        textarea:focus, input[type="text"]:focus, select:focus {
+            border-color: var(--primary-color);
+            outline: none;
+        }
+        
+        textarea {
+            min-height: 200px;
+            resize: vertical;
+        }
+        
+        .file-upload {
+            border: 2px dashed #ddd;
+            border-radius: 5px;
+            padding: 20px;
+            text-align: center;
+            margin-bottom: 20px;
+            transition: border 0.3s;
+        }
+        
+        .file-upload:hover {
+            border-color: var(--primary-color);
+        }
+        
+        .file-upload p {
+            margin-bottom: 10px;
+            color: var(--dark-gray);
+        }
+        
+        .btn {
+            background-color: var(--primary-color);
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 600;
+            transition: background 0.3s;
+        }
+        
+        .btn:hover {
+            background-color: #3367d6;
+        }
+        
+        .btn-convert {
+            background-color: var(--secondary-color);
+            display: block;
+            width: 100%;
+            margin-top: 20px;
+            padding: 15px;
+            font-size: 18px;
+        }
+        
+        .btn-convert:hover {
+            background-color: #2d9249;
+        }
+        
+        .alert {
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+            display: none;
+        }
+        
+        .alert-error {
+            background-color: #ffebee;
+            color: var(--accent-color);
+            border: 1px solid #ffcdd2;
+        }
+        
+        .alert-success {
+            background-color: #e8f5e9;
+            color: var(--secondary-color);
+            border: 1px solid #c8e6c9;
+        }
+        
+        .loading {
+            display: none;
+            text-align: center;
+            margin: 20px 0;
+        }
+        
+        .spinner {
+            border: 4px solid rgba(0, 0, 0, 0.1);
+            border-left: 4px solid var(--primary-color);
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .instructions {
+            background-color: var(--light-gray);
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }
+        
+        .instructions h3 {
+            margin-bottom: 10px;
+            color: var(--primary-color);
+        }
+        
+        .instructions ul {
+            margin-left: 20px;
+        }
+        
+        footer {
+            text-align: center;
+            margin-top: 30px;
+            color: var(--dark-gray);
+            font-size: 14px;
+        }
+        
+        @media (max-width: 768px) {
+            .container {
+                padding: 20px;
+            }
+        }
+    </style>
 </head>
 <body>
-  <h1>Markdown → PowerPoint</h1>
-  <form id="f" method="post" action="/api/convert" enctype="multipart/form-data">
-    <div class="card">
-      <label><b>Paste text / markdown</b></label>
-      <textarea name="content" placeholder="# Title\n\n- Bullet 1\n  - Sub bullet\n```python\nprint('hi')\n```"></textarea>
-      <div class="row">
-        <label>…or upload a .md file:</label>
-        <input type="file" name="markdown_file" accept=".md,text/markdown"/>
-      </div>
+    <div class="container">
+        <header>
+            <h1>Text to PowerPoint Converter</h1>
+            <p class="subtitle">Transform your text into beautiful presentations with AI</p>
+        </header>
+        
+        <div class="instructions">
+            <h3>How to use:</h3>
+            <ul>
+                <li>Paste your text or upload a Markdown file</li>
+                <li>Provide guidance for the presentation style (optional)</li>
+                <li>Select your preferred LLM provider (only needed if using AI restructuring)</li>
+                <li>Upload a PowerPoint template (optional)</li>
+                <li>Click "Convert to PowerPoint" to generate your presentation</li>
+            </ul>
+        </div>
+        
+        <div id="alertBox" class="alert"></div>
+        
+        <form id="conversionForm">
+            <div class="form-group">
+                <label for="content">Your Text Content:</label>
+                <textarea id="content" name="content" placeholder="Paste your text or Markdown content here..."></textarea>
+            </div>
+            
+            <div class="form-group">
+                <label for="guidance">Presentation Guidance (optional):</label>
+                <input type="text" id="guidance" name="guidance" placeholder="e.g., 'Create an investor pitch deck', 'Make it technical', 'Use a professional tone'">
+            </div>
+            
+            <div class="form-group">
+                <label for="llm_provider">Select LLM Provider:</label>
+                <select id="llm_provider" name="llm_provider">
+                    <option value="openai">OpenAI</option>
+                    <option value="anthropic">Anthropic</option>
+                    <option value="gemini">Google Gemini</option>
+                </select>
+            </div>
+            
+            <div class="form-group">
+                <label for="api_key">API Key (only required if tone or plain text input):</label>
+                <input type="text" id="api_key" name="api_key" placeholder="Enter your API key if needed">
+            </div>
+            
+            <div class="form-group">
+                <label>Upload Files (optional):</label>
+                <div class="file-upload">
+                    <p>Markdown File</p>
+                    <input type="file" id="markdown_file" name="markdown_file" accept=".md,.txt">
+                </div>
+                
+                <div class="file-upload">
+                    <p>PowerPoint Template (.pptx, .potx)</p>
+                    <input type="file" id="template_file" name="template_file" accept=".pptx,.potx">
+                </div>
+            </div>
+            
+            <div class="loading" id="loadingIndicator">
+                <div class="spinner"></div>
+                <p>Processing your presentation... This may take a moment.</p>
+            </div>
+            
+            <button type="submit" class="btn btn-convert">Convert to PowerPoint</button>
+        </form>
+        
+        <footer>
+            <p>Your API key is used only for processing (if needed) and is not stored on our servers.</p>
+        </footer>
     </div>
 
-    <div class="card">
-      <div class="row">
-        <label><b>Template</b></label>
-        <select name="template_id">
-          <option value="">(None / default)</option>
-          {% for t in builtin_templates %}
-          <option value="{{ t }}">{{ t }}</option>
-          {% endfor %}
-        </select>
-        <span>or upload .pptx</span>
-        <input type="file" name="template" accept=".pptx"/>
-      </div>
-      <div class="row">
-        <label>Max bullets per slide</label>
-        <input type="number" name="max_bullets_per_slide" value="8" min="3" max="20"/>
-      </div>
-    </div>
+    <script>
+        document.getElementById('conversionForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const alertBox = document.getElementById('alertBox');
+            const loadingIndicator = document.getElementById('loadingIndicator');
+            const convertButton = document.querySelector('.btn-convert');
+            
+            const content = document.getElementById('content').value.trim();
+            const markdownFile = document.getElementById('markdown_file').files[0];
+            const guidance = document.getElementById('guidance').value.trim();
+            const apiKey = document.getElementById('api_key').value.trim();
 
-    <button type="submit">Generate .pptx</button>
-  </form>
+            if (!content && !markdownFile) {
+                showAlert(alertBox, 'Please provide text content or upload a Markdown file.', 'error');
+                return;
+            }
+
+            // Detect if input looks like Markdown
+            const looksLikeMarkdown = /^#|\n#/.test(content);
+
+            // ✅ Only require API key if guidance given OR plain text input
+            if ((guidance && !apiKey) || (!looksLikeMarkdown && !markdownFile && !apiKey)) {
+                showAlert(alertBox, 'API key is required when using guidance or plain text input.', 'error');
+                return;
+            }
+
+            // Show loading indicator
+            loadingIndicator.style.display = 'block';
+            convertButton.disabled = true;
+
+            const formData = new FormData();
+            if (content) formData.append('content', content);
+            if (markdownFile) formData.append('markdown_file', markdownFile);
+            if (guidance) formData.append('guidance', guidance);
+
+            const llmProvider = document.getElementById('llm_provider').value;
+            formData.append('llm_provider', llmProvider);
+            if (apiKey) formData.append('api_key', apiKey);
+
+            const templateFile = document.getElementById('template_file').files[0];
+            if (templateFile) formData.append('template_file', templateFile);
+
+            try {
+                const response = await fetch('/api/convert', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                if (response.ok) {
+                    const blob = await response.blob();
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.style.display = 'none';
+                    a.href = url;
+                    a.download = 'presentation.pptx';
+                    document.body.appendChild(a);
+                    a.click();
+                    window.URL.revokeObjectURL(url);
+                    
+                    showAlert(alertBox, 'Presentation generated successfully! Your download should start shortly.', 'success');
+                } else {
+                    const errorData = await response.json();
+                    showAlert(alertBox, `Error: ${errorData.detail || 'Something went wrong.'}`, 'error');
+                }
+            } catch (error) {
+                showAlert(alertBox, `Network error: ${error.message}`, 'error');
+            } finally {
+                loadingIndicator.style.display = 'none';
+                convertButton.disabled = false;
+            }
+        });
+        
+        function showAlert(alertBox, message, type) {
+            alertBox.textContent = message;
+            alertBox.className = `alert alert-${type}`;
+            alertBox.style.display = 'block';
+            
+            setTimeout(() => {
+                alertBox.style.display = 'none';
+            }, 5000);
+        }
+    </script>
 </body>
 </html>

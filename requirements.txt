@@ -6,3 +6,4 @@ python-pptx
 markdown
 beautifulsoup4
 pillow
+openai

@@ -59,29 +59,39 @@ def index(request: Request):
 
 # --- LLM Integration ---
 async def call_llm(provider: str, api_key: str, prompt: str, guidance: str = "") -> str:
-    """Call the selected LLM provider to structure the presentation"""
+    """Call the selected LLM provider to generate ready-to-use slide content"""
     if provider not in LLM_PROVIDERS:
         raise HTTPException(status_code=400, detail=f"Unsupported LLM provider: {provider}")
     
     config = LLM_PROVIDERS[provider]
     
-    # Create a comprehensive system prompt for better slide generation
-    system_prompt = f"""You are a presentation structuring assistant. Analyze the given text and break it into appropriate slides for a presentation.
+    # ✅ NEW SYSTEM PROMPT
+    system_prompt = f"""You are a presentation writing assistant. 
+Your job is to take user input and create a polished, ready-to-use PowerPoint deck. 
 
-Follow this format for your response:
-Slide 1: [Title]
-- Key point 1
-- Key point 2
-- Key point 3
+Guidelines:
+- Write complete, professional sentences (no placeholders like "Summarize this").
+- Slide 1: A centered title and subtitle (presentation opener).
+- Slide 2 onwards: Title at the top + 3–5 concise bullet points.
+- Make bullets impactful, factual, and suitable for business presentations.
+- Keep bullets short (max 15 words each).
+- Avoid meta-instructions, square brackets, or vague text.
 
-Slide 2: [Title]
-- Key point 1
-- Key point 2
+Format exactly like this:
+Slide 1: Main Title
+Subtitle: Optional tagline
 
-Continue this pattern for all slides. Make sure each slide has a clear title and 3-5 bullet points maximum.
+Slide 2: Slide Title
+- Bullet point 1
+- Bullet point 2
+- Bullet point 3
+
+Slide 3: Slide Title
+- Bullet point 1
+- Bullet point 2
 
 {guidance}"""
-    
+
     if provider == "openai":
         headers = {
             "Content-Type": "application/json",
@@ -90,13 +100,13 @@ Continue this pattern for all slides. Make sure each slide has a clear title and
         
         messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"Please structure this content into presentation slides:\n\n{prompt}"}
+            {"role": "user", "content": f"Please turn this content into a presentation:\n\n{prompt}"}
         ]
         
         data = {
             "model": config["model"],
             "messages": messages,
-            "temperature": 0.3
+            "temperature": 0.4
         }
         
         try:
@@ -110,7 +120,6 @@ Continue this pattern for all slides. Make sure each slide has a clear title and
         except httpx.HTTPError as e:
             logger.error(f"OpenAI API error: {str(e)}")
             raise HTTPException(status_code=500, detail=f"Error calling OpenAI API: {str(e)}")
-    
     elif provider == "anthropic":
         headers = {
             "Content-Type": "application/json",
@@ -468,82 +477,83 @@ def apply_template_styles(shape, style_info):
         except:
             pass
 
+from pptx.util import Inches, Pt
+from pptx.enum.text import PP_ALIGN
+import re
+def clean_text(text: str) -> str:
+    """Remove placeholder instructions like [Summarize this] from LLM output."""
+    return re.sub(r'^\[.*?\]\s*', '', text).strip()
+
 def create_slide_from_template(prs, slide_data, template_info, slide_index=0):
-    """Create a slide using the template styles"""
-    # Use appropriate layout based on slide index
+    """Create slides with:
+       - Slide 1: Title centered (template style)
+       - Slides 2+: Title at top, content box below
+    """
+    # Choose layout
     if slide_index == 0 and len(prs.slide_layouts) > 0:
         layout = prs.slide_layouts[0]  # Title slide
     elif len(prs.slide_layouts) > 1:
-        layout = prs.slide_layouts[1]  # Content slide
+        layout = prs.slide_layouts[1]  # Title + Content
     else:
         layout = prs.slide_layouts[0]
-    
+
     slide = prs.slides.add_slide(layout)
-    
-    # Set title
-    title_shape = None
-    try:
-        # Try different ways to get the title shape
-        if hasattr(slide.shapes, 'title') and slide.shapes.title:
-            title_shape = slide.shapes.title
-        else:
-            # Look for title placeholder
-            for shape in slide.placeholders:
-                if hasattr(shape, 'placeholder_format') and shape.placeholder_format.type == 1:  # Title
-                    title_shape = shape
-                    break
-    except:
-        pass
-    
-    if title_shape:
+
+    # --- Title ---
+    if slide.shapes.title:
+        title_shape = slide.shapes.title
         title_shape.text = slide_data["title"]
-        if template_info["title_style"]:
+
+        if slide_index > 0:  # For slides after first, force top
+            title_shape.left = Inches(0.5)
+            title_shape.top = Inches(0.3)
+            title_shape.width = Inches(9)
+            title_shape.height = Inches(0.8)
+            for p in title_shape.text_frame.paragraphs:
+                for run in p.runs:
+                    run.font.size = Pt(28)
+            title_shape.text_frame.paragraphs[0].alignment = PP_ALIGN.CENTER
+        else:  # First slide keeps centered default
+            for p in title_shape.text_frame.paragraphs:
+                for run in p.runs:
+                    run.font.size = Pt(32)
+
+        if template_info.get("title_style"):
             apply_template_styles(title_shape, template_info["title_style"])
-    
-    # Add content
-    content_placeholder = None
-    try:
-        # Look for content placeholder
+
+    # --- Content (for slides after first) ---
+    if slide_index > 0:
+        content_placeholder = None
         for shape in slide.placeholders:
-            if shape != title_shape and shape.has_text_frame:
+            if shape != slide.shapes.title and shape.has_text_frame:
                 content_placeholder = shape
                 break
-    except:
-        pass
-    
-    if not content_placeholder:
-        # Fallback: create a textbox
-        try:
+
+        if not content_placeholder:
             content_placeholder = slide.shapes.add_textbox(
-                Inches(1), Inches(1.5), Inches(8), Inches(5)
-            )
-        except:
-            # If that fails, try to find any shape with text frame
-            for shape in slide.shapes:
-                if shape.has_text_frame and shape != title_shape:
-                    content_placeholder = shape
-                    break
-    
-    if content_placeholder:
+                    Inches(1), Inches(2.2), Inches(7.5), Inches(3.8))  # narrower + shorter
+
+
+        # Adjust size so content doesn’t overflow
+        content_placeholder.left = Inches(0.7)
+        content_placeholder.top = Inches(1.5)
+        content_placeholder.width = Inches(8.0)
+        content_placeholder.height = Inches(4.0)  # smaller height to keep within slide
+
         text_frame = content_placeholder.text_frame
         text_frame.clear()
-        
-        for i, item in enumerate(slide_data["content"]):
-            if i == 0:
-                # Use the first paragraph
-                p = text_frame.paragraphs[0] if text_frame.paragraphs else text_frame.add_paragraph()
-            else:
-                p = text_frame.add_paragraph()
-            
-            if item["type"] == "bullet":
-                p.text = "• " + item["text"]
-                p.level = 0
-            else:
-                p.text = item["text"]
-        
-        if template_info["content_style"]:
+        text_frame.auto_size = True
+        text_frame.word_wrap = True
+
+        for item in slide_data["content"]:
+            p = text_frame.add_paragraph()
+            p.text = clean_text(item["text"])  # clean out [..] instructions
+            p.level = 0 if item["type"] == "bullet" else 1
+            p.font.size = Pt(20)
+
+        if template_info.get("content_style"):
             apply_template_styles(content_placeholder, template_info["content_style"])
-    
+
     return slide
 
 # --- Core Conversion ---

@@ -1,5 +1,5 @@
-import os, io, tempfile, shutil, re, json, logging
-from typing import List, Optional, Dict, Any
+import os, tempfile, shutil, re, logging, asyncio
+from typing import List, Dict, Any
 from fastapi import FastAPI, Request, UploadFile, File, Form, HTTPException
 from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -8,12 +8,10 @@ from pptx import Presentation
 from pptx.util import Pt, Inches
 from pptx.enum.text import PP_ALIGN
 from pptx.dml.color import RGBColor
-from PIL import Image
 import httpx
-import asyncio
 import google.generativeai as genai
 
-# Configure logging
+# --- Logging ---
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -21,7 +19,6 @@ logger = logging.getLogger(__name__)
 app = FastAPI(title="Markdown → PowerPoint")
 templates = Jinja2Templates(directory="templates")
 
-# Optional: serve /static if you add CSS/JS
 if os.path.isdir("static"):
     app.mount("/static", StaticFiles(directory="static"), name="static")
 
@@ -30,23 +27,20 @@ BUILTIN_TEMPLATES = {
     "corporate": os.path.join("templates_pack", "corporate.pptx"),
 }
 
-MAX_CONTENT_CHARS = 120_000
-MAX_FILE_SIZE = 10 * 1024 * 1024
-
-# LLM providers configuration
+# --- LLM Providers ---
 LLM_PROVIDERS = {
     "openai": {
         "url": "https://api.openai.com/v1/chat/completions",
-        "model": "gpt-3.5-turbo"
+        "model": "gpt-4o-mini",
     },
     "anthropic": {
         "url": "https://api.anthropic.com/v1/messages",
         "model": "claude-3-sonnet-20240229",
-        "version": "2023-06-01"
+        "version": "2023-06-01",
     },
     "gemini": {
-        "model": "gemini-1.5-flash"
-    }
+        "model": "gemini-1.5-flash",
+    },
 }
 
 @app.get("/", response_class=HTMLResponse)
@@ -54,686 +48,310 @@ def index(request: Request):
     return templates.TemplateResponse("index.html", {
         "request": request,
         "builtin_templates": BUILTIN_TEMPLATES.keys(),
-        "llm_providers": list(LLM_PROVIDERS.keys())
+        "llm_providers": list(LLM_PROVIDERS.keys()),
     })
 
-# --- LLM Integration ---
+# ---------------------------
+# Cleaning helpers (safe)
+# ---------------------------
+MD_BOLD = re.compile(r"\*\*")  # remove ** used for markdown bold
+
+def strip_leading_number(s: str) -> str:
+    # Removes "2 ", "2.", "2) " etc at the very start
+    return re.sub(r"^\s*\d+[.)-]?\s*", "", s.strip())
+
+def strip_slide_prefix(s: str) -> str:
+    # Removes "Slide 2:" or "Slide:" at the start
+    return re.sub(r"^\s*slide\s*\d*\s*:\s*", "", s, flags=re.IGNORECASE).strip()
+
+def strip_bullet_marker(s: str) -> str:
+    # Removes a single leading bullet marker "- ", "* ", or "• "
+    return re.sub(r"^\s*[-*•]\s+", "", s).strip()
+
+def clean_inline(s: str) -> str:
+    # Remove ** markers, keep hyphens inside text, trim
+    s = MD_BOLD.sub("", s)
+    return s.strip()
+
+
+# ---------------------------
+# LLM Integration
+# ---------------------------
 async def call_llm(provider: str, api_key: str, prompt: str, guidance: str = "") -> str:
-    """Call the selected LLM provider to generate ready-to-use slide content"""
     if provider not in LLM_PROVIDERS:
         raise HTTPException(status_code=400, detail=f"Unsupported LLM provider: {provider}")
-    
-    config = LLM_PROVIDERS[provider]
-    
-    # ✅ NEW SYSTEM PROMPT
-    system_prompt = f"""You are a presentation writing assistant. 
-Your job is to take user input and create a polished, ready-to-use PowerPoint deck. 
 
-Guidelines:
-- Write complete, professional sentences (no placeholders like "Summarize this").
-- Slide 1: A centered title and subtitle (presentation opener).
-- Slide 2 onwards: Title at the top + 3–5 concise bullet points.
-- Make bullets impactful, factual, and suitable for business presentations.
-- Keep bullets short (max 15 words each).
-- Avoid meta-instructions, square brackets, or vague text.
+    config = LLM_PROVIDERS[provider]
+
+    system_prompt = """You are a presentation writing assistant.
+Turn the input into a polished, ready-to-use PowerPoint deck.
+
+Rules:
+- Slide 1: Big centered title + optional subtitle.
+- Slide 2 onwards: Title at top, with bullets.
+- Each bullet = short headline + 1–2 sentence explanation.
+- Headline should be bold, 5–10 words max.
+- Explanation should be plain text under the headline.
+- Use '•' for bullets (or ).
+- No meta-text, no placeholders, no [square brackets].
+- Do not output markdown headings like ##; just plain lines.
 
 Format exactly like this:
-Slide 1: Main Title
-Subtitle: Optional tagline
+
+Slide 1: Title
+Subtitle: Optional
 
 Slide 2: Slide Title
-- Bullet point 1
-- Bullet point 2
-- Bullet point 3
+- Headline 1: Explanation sentence.
+- Headline 2: Explanation sentence.
+- Headline 3: Explanation sentence.
+"""
 
-Slide 3: Slide Title
-- Bullet point 1
-- Bullet point 2
-
-{guidance}"""
+    if guidance:
+        system_prompt += f"\nAdditional guidance:\n{guidance}\n"
 
     if provider == "openai":
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_key}"
-        }
-        
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"Please turn this content into a presentation:\n\n{prompt}"}
-        ]
-        
-        data = {
-            "model": config["model"],
-            "messages": messages,
-            "temperature": 0.4
-        }
-        
-        try:
-            timeout = httpx.Timeout(60.0, read=60.0)
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                response = await client.post(config["url"], json=data, headers=headers)
-                response.raise_for_status()
-                result = response.json()
-                return result["choices"][0]["message"]["content"]
-        
-        except httpx.HTTPError as e:
-            logger.error(f"OpenAI API error: {str(e)}")
-            raise HTTPException(status_code=500, detail=f"Error calling OpenAI API: {str(e)}")
+        headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
+        messages = [{"role": "system", "content": system_prompt},
+                    {"role": "user", "content": prompt}]
+        data = {"model": config["model"], "messages": messages, "temperature": 0.4}
+
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            r = await client.post(config["url"], json=data, headers=headers)
+            r.raise_for_status()
+            return r.json()["choices"][0]["message"]["content"]
+
     elif provider == "anthropic":
-        headers = {
-            "Content-Type": "application/json",
-            "x-api-key": api_key,
-            "anthropic-version": config["version"]
-        }
-        
+        headers = {"Content-Type": "application/json", "x-api-key": api_key, "anthropic-version": config["version"]}
         data = {
             "model": config["model"],
             "max_tokens": 4000,
-            "messages": [{"role": "user", "content": f"{system_prompt}\n\nPlease structure this content into presentation slides:\n\n{prompt}"}]
+            "messages": [{"role": "user", "content": f"{system_prompt}\n\n{prompt}"}],
         }
-        
-        try:
-            timeout = httpx.Timeout(60.0, read=60.0)
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                response = await client.post(config["url"], json=data, headers=headers)
-                response.raise_for_status()
-                result = response.json()
-                return result["content"][0]["text"]
-        
-        except httpx.HTTPError as e:
-            logger.error(f"Anthropic API error: {str(e)}")
-            raise HTTPException(status_code=500, detail=f"Error calling Anthropic API: {str(e)}")
-    
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            r = await client.post(config["url"], json=data, headers=headers)
+            r.raise_for_status()
+            return r.json()["content"][0]["text"]
+
     elif provider == "gemini":
-        try:
-            # Configure the Gemini API
-            genai.configure(api_key=api_key)
-            
-            # Create the model with proper configuration
-            generation_config = {
-                "temperature": 0.3,
-                "top_p": 0.8,
-                "top_k": 40,
-                "max_output_tokens": 4000,
-            }
-            
-            # Safety settings to reduce blocking
-            safety_settings = [
-                {
-                    "category": "HARM_CATEGORY_HARASSMENT",
-                    "threshold": "BLOCK_MEDIUM_AND_ABOVE"
-                },
-                {
-                    "category": "HARM_CATEGORY_HATE_SPEECH", 
-                    "threshold": "BLOCK_MEDIUM_AND_ABOVE"
-                },
-                {
-                    "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
-                    "threshold": "BLOCK_MEDIUM_AND_ABOVE"
-                },
-                {
-                    "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
-                    "threshold": "BLOCK_MEDIUM_AND_ABOVE"
-                }
-            ]
-            
-            model = genai.GenerativeModel(
-                model_name=config["model"],
-                generation_config=generation_config,
-                safety_settings=safety_settings
-            )
-            
-            # Prepare the full prompt
-            full_prompt = f"{system_prompt}\n\nPlease structure this content into presentation slides:\n\n{prompt}"
-            
-            # Add retry logic for Gemini API
-            max_retries = 3
-            for attempt in range(max_retries):
-                try:
-                    # Generate content with timeout
-                    response = model.generate_content(
-                        full_prompt,
-                        request_options={"timeout": 60}
-                    )
-                    
-                    # Check if we have a valid response
-                    if hasattr(response, 'text') and response.text and response.text.strip():
-                        return response.text
-                    elif hasattr(response, 'candidates') and response.candidates:
-                        # Try to get text from candidates
-                        candidate = response.candidates[0]
-                        if hasattr(candidate, 'content') and hasattr(candidate.content, 'parts'):
-                            parts_text = ""
-                            for part in candidate.content.parts:
-                                if hasattr(part, 'text'):
-                                    parts_text += part.text
-                            if parts_text.strip():
-                                return parts_text
-                    
-                    # If we get here, no valid content was generated
-                    if attempt == max_retries - 1:
-                        logger.warning("Gemini API returned empty response after all retries")
-                        raise HTTPException(status_code=400, detail="Gemini API returned empty response - content may have been blocked by safety filters")
-                    
-                    # Wait before retry
-                    await asyncio.sleep(2 ** attempt)
-                    
-                except Exception as retry_error:
-                    if attempt == max_retries - 1:
-                        raise retry_error
-                    logger.warning(f"Gemini API attempt {attempt + 1} failed: {str(retry_error)}")
-                    await asyncio.sleep(2 ** attempt)
-        
-        except HTTPException:
-            raise
-        except Exception as e:
-            error_msg = str(e)
-            logger.error(f"Gemini API error: {error_msg}")
-            
-            # Provide more specific error messages
-            if "API_KEY_INVALID" in error_msg or "invalid API key" in error_msg.lower():
-                raise HTTPException(status_code=401, detail="Invalid Gemini API key")
-            elif "quota" in error_msg.lower() or "limit" in error_msg.lower():
-                raise HTTPException(status_code=429, detail="Gemini API quota exceeded")
-            elif "safety" in error_msg.lower() or "blocked" in error_msg.lower():
-                raise HTTPException(status_code=400, detail="Content blocked by Gemini safety filters")
-            else:
-                raise HTTPException(status_code=500, detail=f"Gemini API error: {error_msg}")
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel(
+            model_name=config["model"],
+            generation_config={"temperature": 0.3, "max_output_tokens": 4000},
+            safety_settings=[{"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"}],
+        )
+        resp = model.generate_content(f"{system_prompt}\n\n{prompt}", request_options={"timeout": 60})
+        return getattr(resp, "text", "").strip() or "Slide 1: Untitled\nSubtitle:"
+
+# ---------------------------
+# Parsing LLM output
+# ---------------------------
+def tokenize_slides(text: str) -> List[str]:
+    """Split into slide blocks. Prefer 'Slide N:' markers; fallback to blank lines."""
+    text = text.replace("\r", "")
+    # Try "Slide X:" segmentation
+    parts = re.split(r"(?mi)^\s*Slide\s*\d*\s*:\s*", text)
+    if len(parts) > 1:
+        # re.split keeps text before the first match in parts[0] (possibly empty) and
+        # then each following part starts with the title line. Rebuild properly.
+        blocks = []
+        for part in parts[1:]:
+            # First line up to the first newline is the title; keep whole block
+            blocks.append(part.strip())
+        return blocks
+
+    # Fallback: split by double newlines
+    return [blk.strip() for blk in re.split(r"\n\s*\n", text) if blk.strip()]
 
 def parse_llm_response(response_text: str) -> List[Dict[str, Any]]:
-    """Parse LLM response into structured slide data"""
-    slides = []
-    
-    # If the response is empty, create a default slide
-    if not response_text.strip():
-        return [{
-            "title": "Presentation",
-            "content": [{"type": "paragraph", "text": "No content could be generated."}],
-            "type": "content"
-        }]
-    
-    # Try to extract slides using different patterns
-    slide_patterns = [
-        r'(?:Slide\s*\d+):\s*(.*?)(?=(?:Slide\s*\d+):|$)',
-        r'#+\s*(.*?)(?=#+|$)',
-        r'Title:\s*(.*?)(?=Content:|Title:|$)',
-    ]
-    
-    content = None
-    for pattern in slide_patterns:
-        # Fixed: Changed re.DOTNAME to re.DOTALL
-        slides_found = re.findall(pattern, response_text, re.DOTALL | re.IGNORECASE)
-        if slides_found:
-            content = slides_found
-            break
-    
-    # If no specific pattern found, split by double newlines
-    if not content:
-        content = response_text.split('\n\n')
-    
-    for i, item in enumerate(content):
-        if not item.strip():
+    slides: List[Dict[str, Any]] = []
+    blocks = tokenize_slides(response_text)
+
+    for i, block in enumerate(blocks):
+        lines = [l.rstrip() for l in block.split("\n") if l.strip()]
+        if not lines:
             continue
-            
-        lines = item.strip().split('\n')
-        title = f"Slide {i+1}"
-        content_lines = []
-        
-        for line in lines:
-            line = line.strip()
-            if not line:
-                continue
-                
-            # Extract title from the first meaningful line
-            # Extract title from the first meaningful line
-            # Extract title from the first meaningful line
-            if title == f"Slide {i+1}" and len(line) > 3 and not line.startswith('-') and not line.startswith('*'):
-                clean = line.strip()
-                # Remove "Slide X:" or "Title:" prefixes if present
-                clean = re.sub(r'^(Slide\s*\d+:?|Title:)\s*', '', clean, flags=re.IGNORECASE)
-                title = clean
-                # ✅ Do not add this to content
+
+        # Title is first line in block
+        raw_title = lines[0]
+        # If we segmented by "Slide:", raw_title begins with the *actual* title;
+        # but also handle if user/LLM still wrote "Slide X: Title"
+        title = clean_inline(strip_slide_prefix(strip_leading_number(raw_title)))
+
+        content_items: List[Dict[str, Any]] = []
+        last_bullet_idx = None
+
+        for line in lines[1:]:
+            raw = line.strip()
+
+            # Subtitle
+            if raw.lower().startswith("subtitle:"):
+                subtitle_text = clean_inline(raw.split(":", 1)[1])
+                content_items.append({"type": "subtitle", "text": subtitle_text})
                 continue
 
+            # Bullet detection (keep marker, then strip)
+            if re.match(r"^[-*•]\s+", raw):
+                body = strip_bullet_marker(raw)
 
-                
-            # Handle bullet points
-            if line.startswith('- ') or line.startswith('* '):
-                content_lines.append({"type": "bullet", "text": line[2:].strip()})
-            elif line.startswith('• '):
-                content_lines.append({"type": "bullet", "text": line[2:].strip()})
-            else:
-                content_lines.append({"type": "paragraph", "text": line})
-        
-        # If we didn't find a better title, use the first content line
-        # If we didn't find a better title, use the first content line
-            if title == f"Slide {i+1}" and content_lines:
-                clean = content_lines[0]["text"]
-                clean = re.sub(r'^(Slide\s*\d+:?|Title:)\s*', '', clean, flags=re.IGNORECASE)
-                title = clean[:50] + "..." if len(clean) > 50 else clean
-                # ✅ Remove it from content (otherwise it repeats below title)
-                content_lines = content_lines[1:]
+                # Headline: detail split (use first colon only)
+                if ":" in body:
+                    headline, detail = body.split(":", 1)
+                    headline = clean_inline(strip_leading_number(headline))
+                    detail = clean_inline(detail)
+                    content_items.append({"type": "bullet", "title": headline, "detail": detail})
+                else:
+                    headline = clean_inline(strip_leading_number(body))
+                    content_items.append({"type": "bullet", "title": headline, "detail": ""})
+                last_bullet_idx = len(content_items) - 1
+                continue
 
-        
+            # Non-bullet line: treat as detail for previous bullet if any
+            if last_bullet_idx is not None and content_items[last_bullet_idx]["type"] == "bullet":
+                extra = clean_inline(raw)
+                if extra:
+                    # Append to existing detail with a space
+                    if content_items[last_bullet_idx]["detail"]:
+                        content_items[last_bullet_idx]["detail"] += " " + extra
+                    else:
+                        content_items[last_bullet_idx]["detail"] = extra
+                continue
+
+            # Otherwise, paragraph
+            content_items.append({"type": "paragraph", "text": clean_inline(strip_leading_number(raw))})
+
+        # Skip truly empty slides
+        has_any = title or any(ci.get("text") or ci.get("title") for ci in content_items)
+        if not has_any:
+            continue
+
         slides.append({
-            "title": title,
-            "content": content_lines,
-            "type": "title" if i == 0 else "content"
+            "title": title if title else f"Slide {i+1}",
+            "content": content_items,
+            "type": "title" if i == 0 else "content",
         })
-    
-    # Ensure we have at least one slide
+
+    # Fallback if nothing parsed
     if not slides:
         slides = [{
             "title": "Presentation",
-            "content": [{"type": "paragraph", "text": response_text}],
-            "type": "content"
+            "content": [{"type": "paragraph", "text": clean_inline(response_text)}],
+            "type": "title",
         }]
-    
+
     return slides
 
-# --- Template Analysis ---
-def analyze_template(prs: Presentation) -> Dict[str, Any]:
-    """Analyze the template to extract styles, colors, and layouts"""
-    template_info = {
-        "title_style": None,
-        "content_style": None,
-        "colors": set(),
-        "layouts": [],
-        "images": []
-    }
-    
-    # Analyze master slides for styles
-    for master in prs.slide_masters:
-        for layout in master.slide_layouts:
-            layout_info = {
-                "name": layout.name,
-                "placeholders": []
-            }
-            
-            # Find title placeholder first
-            title_shape = None
-            try:
-                # Try to get title placeholder
-                for shape in layout.placeholders:
-                    if hasattr(shape, 'placeholder_format') and shape.placeholder_format.type == 1:  # Title placeholder
-                        title_shape = shape
-                        break
-                # Fallback: check if layout has a title shape
-                if not title_shape and hasattr(layout, 'shapes') and hasattr(layout.shapes, 'title'):
-                    title_shape = layout.shapes.title
-            except:
-                pass
-            
-            for shape in layout.shapes:
-                try:
-                    if shape.has_text_frame:
-                        text_frame = shape.text_frame
-                        style_info = {
-                            "font": None,
-                            "size": None,
-                            "color": None,
-                            "alignment": None
-                        }
-                        
-                        # Extract style information from paragraphs
-                        if text_frame.paragraphs:
-                            p = text_frame.paragraphs[0]
-                            if p.runs:
-                                run = p.runs[0]
-                                try:
-                                    style_info["font"] = run.font.name
-                                except:
-                                    pass
-                                try:
-                                    style_info["size"] = run.font.size
-                                except:
-                                    pass
-                                try:
-                                    if run.font.color and hasattr(run.font.color, 'rgb'):
-                                        style_info["color"] = run.font.color.rgb
-                                except:
-                                    pass
-                                try:
-                                    style_info["alignment"] = p.alignment
-                                except:
-                                    pass
-                        
-                        # Determine if this is a title or content shape
-                        is_title_shape = False
-                        if title_shape and shape == title_shape:
-                            is_title_shape = True
-                        elif hasattr(shape, 'placeholder_format'):
-                            # Check placeholder type
-                            if shape.placeholder_format.type == 1:  # Title
-                                is_title_shape = True
-                        
-                        if is_title_shape and not template_info["title_style"]:
-                            template_info["title_style"] = style_info
-                        elif not is_title_shape and not template_info["content_style"]:
-                            template_info["content_style"] = style_info
-                
-                except Exception as e:
-                    # Skip shapes that cause errors
-                    logger.debug(f"Error analyzing shape: {str(e)}")
-                    continue
-                
-                # Check for images in the template
-                try:
-                    if hasattr(shape, "image") and shape.image:
-                        image_bytes = shape.image.blob
-                        template_info["images"].append(image_bytes)
-                except:
-                    pass
-            
-            template_info["layouts"].append(layout_info)
-    
-    # Set default styles if none were found
-    if not template_info["title_style"]:
-        template_info["title_style"] = {
-            "font": "Calibri",
-            "size": Pt(44),
-            "color": RGBColor(0, 0, 0),
-            "alignment": PP_ALIGN.CENTER
-        }
-    
-    if not template_info["content_style"]:
-        template_info["content_style"] = {
-            "font": "Calibri", 
-            "size": Pt(18),
-            "color": RGBColor(0, 0, 0),
-            "alignment": PP_ALIGN.LEFT
-        }
-    
-    return template_info
-
-# --- Slide Creation with Template Styles ---
-def apply_template_styles(shape, style_info):
-    """Apply template styles to a shape"""
-    if not style_info or not shape.has_text_frame:
-        return
-    
-    text_frame = shape.text_frame
-    for paragraph in text_frame.paragraphs:
-        for run in paragraph.runs:
-            try:
-                if style_info.get("font"):
-                    run.font.name = style_info["font"]
-            except:
-                pass
-            try:
-                if style_info.get("size"):
-                    run.font.size = style_info["size"]
-            except:
-                pass
-            try:
-                if style_info.get("color"):
-                    run.font.color.rgb = style_info["color"]
-            except:
-                pass
-        try:
-            if style_info.get("alignment"):
-                paragraph.alignment = style_info["alignment"]
-        except:
-            pass
-
-from pptx.util import Inches, Pt
-from pptx.enum.text import PP_ALIGN
-import re
-def clean_text(text: str) -> str:
-    """Remove placeholder instructions like [Summarize this] from LLM output."""
-    return re.sub(r'^\[.*?\]\s*', '', text).strip()
-
-def create_slide_from_template(prs, slide_data, template_info, slide_index=0):
-    """Create slides with:
-       - Slide 1: Title centered (template style)
-       - Slides 2+: Title at top, content box below
-    """
-    # Choose layout
-    if slide_index == 0 and len(prs.slide_layouts) > 0:
-        layout = prs.slide_layouts[0]  # Title slide
-    elif len(prs.slide_layouts) > 1:
-        layout = prs.slide_layouts[1]  # Title + Content
-    else:
-        layout = prs.slide_layouts[0]
-
+# ---------------------------
+# Slide creation
+# ---------------------------
+def create_slide(prs: Presentation, slide_data: Dict[str, Any], slide_index: int = 0):
+    # Layouts: 0 = Title slide, 1 = Title+Content (common in most templates)
+    layout = prs.slide_layouts[0] if slide_index == 0 else prs.slide_layouts[1]
     slide = prs.slides.add_slide(layout)
 
-    # --- Title ---
+    # Title
     if slide.shapes.title:
-        title_shape = slide.shapes.title
-        title_shape.text = slide_data["title"]
+        slide.shapes.title.text = clean_inline(slide_data["title"])
+        for p in slide.shapes.title.text_frame.paragraphs:
+            for run in p.runs:
+                run.font.size = Pt(32 if slide_index == 0 else 28)
+        # For non-first slides, ensure title is near top (works across templates)
+        if slide_index > 0:
+            slide.shapes.title.top = Inches(0.3)
+            slide.shapes.title.left = Inches(0.5)
+            slide.shapes.title.width = Inches(9)
+            slide.shapes.title.height = Inches(0.9)
 
-        if slide_index > 0:  # For slides after first, force top
-            title_shape.left = Inches(0.5)
-            title_shape.top = Inches(0.3)
-            title_shape.width = Inches(9)
-            title_shape.height = Inches(0.8)
-            for p in title_shape.text_frame.paragraphs:
-                for run in p.runs:
-                    run.font.size = Pt(28)
-            title_shape.text_frame.paragraphs[0].alignment = PP_ALIGN.CENTER
-        else:  # First slide keeps centered default
-            for p in title_shape.text_frame.paragraphs:
-                for run in p.runs:
-                    run.font.size = Pt(32)
+    # Content: handle subtitle on slide 1; bullets/paragraphs on others
+    if slide_index == 0:
+        # Subtitle
+        subtitle_items = [c for c in slide_data["content"] if c["type"] == "subtitle"]
+        if subtitle_items:
+            sub_text = subtitle_items[0]["text"]
+            # Try placeholder[1], else add a textbox
+            subtitle_shape = None
+            try:
+                if len(slide.placeholders) > 1 and slide.placeholders[1].has_text_frame:
+                    subtitle_shape = slide.placeholders[1]
+            except Exception:
+                subtitle_shape = None
 
-        if template_info.get("title_style"):
-            apply_template_styles(title_shape, template_info["title_style"])
+            if subtitle_shape is None:
+                subtitle_shape = slide.shapes.add_textbox(Inches(1.0), Inches(3.5), Inches(8.0), Inches(1.0))
 
-    # --- Content (for slides after first) ---
-    if slide_index > 0:
-        content_placeholder = None
-        for shape in slide.placeholders:
-            if shape != slide.shapes.title and shape.has_text_frame:
-                content_placeholder = shape
-                break
+            tf = subtitle_shape.text_frame
+            tf.clear()
+            # Always write the first paragraph into the existing paragraph after clear()
+            p = tf.paragraphs[0]
+            p.text = sub_text
+            p.alignment = PP_ALIGN.CENTER
+            for run in p.runs:
+                run.font.size = Pt(20)
+            return slide  # done with slide 1
 
-        if not content_placeholder:
-            content_placeholder = slide.shapes.add_textbox(
-                    Inches(1), Inches(2.2), Inches(7.5), Inches(3.8))  # narrower + shorter
+    # Slides 2+
+    # Find a content placeholder with a text frame; else create one
+    content_shape = None
+    for ph in slide.placeholders:
+        if ph != slide.shapes.title and ph.has_text_frame:
+            content_shape = ph
+            break
+    if content_shape is None:
+        content_shape = slide.shapes.add_textbox(Inches(0.8), Inches(1.5), Inches(8.4), Inches(4.2))
 
+    tf = content_shape.text_frame
+    tf.clear()
+    first_para = True
 
-        # Adjust size so content doesn’t overflow
-        content_placeholder.left = Inches(0.7)
-        content_placeholder.top = Inches(1.5)
-        content_placeholder.width = Inches(8.0)
-        content_placeholder.height = Inches(4.0)  # smaller height to keep within slide
+    def add_para(text: str, level: int, *, bold=False, size=Pt(18), color: RGBColor | None = None):
+        nonlocal first_para
+        p = tf.paragraphs[0] if first_para else tf.add_paragraph()
+        first_para = False
+        p.text = text
+        p.level = level
+        p.font.bold = bold
+        p.font.size = size
+        if color:
+            p.font.color.rgb = color
+        return p
 
-        text_frame = content_placeholder.text_frame
-        text_frame.clear()
-        text_frame.auto_size = True
-        text_frame.word_wrap = True
-
-        for item in slide_data["content"]:
-            p = text_frame.add_paragraph()
-            p.text = clean_text(item["text"])  # clean out [..] instructions
-            p.level = 0 if item["type"] == "bullet" else 1
-            p.font.size = Pt(20)
-
-        if template_info.get("content_style"):
-            apply_template_styles(content_placeholder, template_info["content_style"])
+    for item in slide_data["content"]:
+        if item["type"] == "bullet":
+            head = item["title"]
+            det  = item.get("detail", "")
+            add_para(head, 0, bold=True, size=Pt(22))
+            if det:
+                add_para(det, 1, size=Pt(18), color=RGBColor(80, 80, 80))
+        elif item["type"] == "paragraph":
+            add_para(item["text"], 0, size=Pt(20))
 
     return slide
 
-# --- Core Conversion ---
-async def structured_markdown_to_slides(prs, text_input, guidance, llm_provider, api_key):
-    """Use LLM to structure content and create slides with template styles"""
-    # Call LLM to structure the content
+# ---------------------------
+# Main pipeline
+# ---------------------------
+async def structured_markdown_to_slides(prs: Presentation, text_input: str, guidance: str,
+                                        llm_provider: str, api_key: str) -> Presentation:
     llm_response = await call_llm(llm_provider, api_key, text_input, guidance)
-    
-    # Parse the LLM response
     slides_data = parse_llm_response(llm_response)
-    
-    # Analyze the template for styling
-    template_info = analyze_template(prs)
-    
-    # Create slides
     for i, slide_data in enumerate(slides_data):
-        create_slide_from_template(prs, slide_data, template_info, i)
-    
-    return prs
-# --- Utilities: PPT helpers ---
-def add_slide(prs, title_text, body_lines, is_title_slide=False):
-    """Add a slide with title and body content"""
-    from pptx.util import Pt, Inches
-
-    if is_title_slide:
-        slide_layout = prs.slide_layouts[0]
-    else:
-        slide_layout = None
-        for layout in prs.slide_layouts:
-            for ph in layout.placeholders:
-                if ph.placeholder_format.type == 2:  # Content placeholder
-                    slide_layout = layout
-                    break
-            if slide_layout:
-                break
-        if not slide_layout:
-            slide_layout = prs.slide_layouts[1]
-
-    slide = prs.slides.add_slide(slide_layout)
-
-    if slide.shapes.title:
-        slide.shapes.title.text = title_text
-
-    if not is_title_slide:
-        content_placeholder = None
-        for shape in slide.placeholders:
-            if shape.is_placeholder and shape.placeholder_format.type == 2:
-                content_placeholder = shape
-                break
-
-        if content_placeholder:
-            tf = content_placeholder.text_frame
-            tf.clear()
-        else:
-            textbox = slide.shapes.add_textbox(Inches(1), Inches(2.5), Inches(8), Inches(4))
-            tf = textbox.text_frame
-
-        for line in body_lines:
-            p = tf.add_paragraph()
-            if line.startswith("CODE:"):
-                p.text = line.replace("CODE:", "")
-                p.font.name = "Courier New"
-                p.font.size = Pt(16)
-            elif line.startswith("• "):
-                p.text = line[2:]
-                p.level = 0
-                p.font.size = Pt(18)
-            else:
-                p.text = line
-                p.font.size = Pt(18)
-
-def split_into_sentences(text: str) -> list[str]:
-    """Naive sentence splitter for plain text"""
-    import re
-    sentences = re.split(r'(?<=[.!?])\s+', text.strip())
-    return [s.strip() for s in sentences if s.strip()]
-
-def markdown_to_slides(prs, text_input, max_chars_per_slide: int = 1000):
-    """Convert markdown or plain text into slides with auto headlines."""
-    text_input = text_input.replace("\r", "").replace("_x000D_", "")
-    lines = [l for l in text_input.split("\n") if l.strip()]
-
-    # Detect if markdown style headings exist
-    has_md = any(line.strip().startswith("#") for line in lines)
-
-    if not has_md:
-        # --- Plain text mode ---
-        text = " ".join(lines)
-        sentences = split_into_sentences(text)
-
-        chunk = []
-        char_count = 0
-
-        for sent in sentences:
-            if char_count + len(sent) > max_chars_per_slide and chunk:
-                first = chunk[0]
-                title = " ".join(first.split()[:8]) + ("..." if len(first.split()) > 8 else "")
-                body = chunk[1:] if len(chunk) > 1 else []
-                add_slide(prs, title, body, is_title_slide=False)
-
-                chunk = []
-                char_count = 0
-
-            chunk.append(sent)
-            char_count += len(sent)
-
-        if chunk:
-            first = chunk[0]
-            title = " ".join(first.split()[:8]) + ("..." if len(first.split()) > 8 else "")
-            body = chunk[1:] if len(chunk) > 1 else []
-            add_slide(prs, title, body, is_title_slide=False)
-
-        return prs
-
-    # --- Markdown mode ---
-    current_title = None
-    current_body = []
-    in_code_block = False
-    is_title_slide = False
-
-    for line in lines:
-        if line.startswith("```"):
-            in_code_block = not in_code_block
-            continue
-
-        if in_code_block:
-            current_body.append("CODE:" + line)
-            continue
-
-        if line.startswith("# "):
-            if current_title:
-                add_slide(prs, current_title, current_body, is_title_slide)
-                current_body = []
-            current_title = line[2:].strip()
-            is_title_slide = True
-
-        elif line.startswith("## "):
-            if current_title:
-                add_slide(prs, current_title, current_body, is_title_slide)
-            current_title = line[3:].strip()
-            current_body = []
-            is_title_slide = False
-
-        elif line.startswith("- "):
-            current_body.append("• " + line[2:].strip())
-
-        else:
-            current_body.append(line.strip())
-
-    if current_title:
-        add_slide(prs, current_title, current_body, is_title_slide)
-
+        create_slide(prs, slide_data, i)
     return prs
 
-
-# --- API: Convert ---
+# ---------------------------
+# API
+# ---------------------------
 @app.post("/api/convert")
 async def convert(
     content: str = Form(None),
-    markdown_file: UploadFile = File(None),
     template_file: UploadFile = File(None),
     template_id: str = Form(None),
     guidance: str = Form(""),
     llm_provider: str = Form("openai"),
     api_key: str = Form(""),
 ):
-    text_input = None
-
-    if content and content.strip():
-        text_input = content.strip()
-
-    if not text_input and markdown_file is not None:
-        raw = await markdown_file.read()
-        try:
-            text_input = raw.decode("utf-8")
-        except:
-            raise HTTPException(status_code=400, detail="Invalid file encoding. Please upload UTF-8 text/markdown.")
-
-    if not text_input:
-        raise HTTPException(status_code=400, detail="Provide content in text area or upload a markdown file")
+    if not content or not content.strip():
+        raise HTTPException(status_code=400, detail="Provide content in text area")
 
     # Load template
     if template_file:
@@ -744,114 +362,26 @@ async def convert(
     elif template_id and template_id in BUILTIN_TEMPLATES and os.path.exists(BUILTIN_TEMPLATES[template_id]):
         prs = Presentation(BUILTIN_TEMPLATES[template_id])
     else:
-        default_template = "templates/default.pptx"
-        prs = Presentation(default_template) if os.path.exists(default_template) else Presentation()
+        prs = Presentation()
 
-    # Remove first blank slide if present
+    # Remove default blank slide if present
     if prs.slides:
-        r_id = prs.slides._sldIdLst[0].rId
-        prs.part.drop_rel(r_id)
-        del prs.slides._sldIdLst[0]
+        try:
+            r_id = prs.slides._sldIdLst[0].rId
+            prs.part.drop_rel(r_id)
+            del prs.slides._sldIdLst[0]
+        except Exception:
+            pass
 
-    # --- Decide how to process ---
-    has_markdown = any(line.strip().startswith("#") for line in text_input.split("\n"))
+    prs = await structured_markdown_to_slides(prs, content, guidance, llm_provider, api_key)
 
-    if has_markdown:
-        if guidance.strip():  # Markdown + tone → use LLM
-            if not api_key:
-                raise HTTPException(status_code=400, detail="API key is required when tone/guidance is provided")
-            prs = await structured_markdown_to_slides(prs, text_input, guidance, llm_provider, api_key)
-        else:  # Markdown only → direct parsing
-            prs = markdown_to_slides(prs, text_input)
-    else:
-        # Plain text always → LLM required
-        if not api_key:
-            raise HTTPException(status_code=400, detail="API key is required for plain text input")
-        prs = await structured_markdown_to_slides(prs, text_input, guidance, llm_provider, api_key)
-
-    # Save and return PPTX
     output_file = tempfile.NamedTemporaryFile(delete=False, suffix=".pptx")
     prs.save(output_file.name)
-
     return FileResponse(
         output_file.name,
         media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
-        filename="slides.pptx"
+        filename="slides.pptx",
     )
-
-
-
-@app.post("/api/test-gemini")
-async def test_gemini(api_key: str = Form(...)):
-    """Test if the Gemini API key is valid"""
-    try:
-        # Configure the Gemini API
-        genai.configure(api_key=api_key)
-        
-        # Create the model with proper configuration
-        generation_config = {
-            "temperature": 0.1,
-            "max_output_tokens": 100,
-        }
-        
-        # Safety settings
-        safety_settings = [
-            {
-                "category": "HARM_CATEGORY_HARASSMENT",
-                "threshold": "BLOCK_NONE"
-            },
-            {
-                "category": "HARM_CATEGORY_HATE_SPEECH", 
-                "threshold": "BLOCK_NONE"
-            },
-            {
-                "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
-                "threshold": "BLOCK_NONE"
-            },
-            {
-                "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
-                "threshold": "BLOCK_NONE"
-            }
-        ]
-        
-        model = genai.GenerativeModel(
-            model_name="gemini-1.5-flash",
-            generation_config=generation_config,
-            safety_settings=safety_settings
-        )
-        
-        # Generate content with simple test message
-        response = model.generate_content(
-            "Hello, please respond with exactly 'API is working' if you can see this message.",
-            request_options={"timeout": 30}
-        )
-        
-        # Check response
-        if hasattr(response, 'text') and response.text and response.text.strip():
-            return {"status": "success", "response": response.text.strip()}
-        elif hasattr(response, 'candidates') and response.candidates:
-            candidate = response.candidates[0]
-            if hasattr(candidate, 'content') and hasattr(candidate.content, 'parts'):
-                parts_text = ""
-                for part in candidate.content.parts:
-                    if hasattr(part, 'text'):
-                        parts_text += part.text
-                if parts_text.strip():
-                    return {"status": "success", "response": parts_text.strip()}
-        
-        return {"status": "error", "message": "No response generated - possibly blocked by safety filters"}
-        
-    except Exception as e:
-        error_msg = str(e)
-        logger.error(f"Gemini test error: {error_msg}")
-        
-        # Provide specific error messages
-        if "API_KEY_INVALID" in error_msg or "invalid API key" in error_msg.lower():
-            return {"status": "error", "message": "Invalid API key"}
-        elif "quota" in error_msg.lower() or "limit" in error_msg.lower():
-            return {"status": "error", "message": "API quota exceeded"}
-        else:
-            return {"status": "error", "message": f"API error: {error_msg}"}
 
 @app.get("/health")
 def health():

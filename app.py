@@ -504,3 +504,17 @@ async def convert(
 @app.get("/health")
 def health():
     return {"ok": True}
+
+if __name__ == "__main__":
+    
+    import os
+    from pyngrok import ngrok
+    import uvicorn
+    port = int(os.environ.get("PORT", 8000))
+    # Reserved ngrok domain (make sure you reserved it in ngrok dashboard)
+    reserved_domain = "grubworm-innocent-wombat.ngrok-free.app"
+    # Start ngrok tunnel
+    public_url = ngrok.connect(addr=port, hostname=reserved_domain)
+    print(f"🚀 ngrok tunnel available at: {public_url.public_url}")
+    # Run FastAPI app
+    uvicorn.run(app, host="0.0.0.0", port=port)

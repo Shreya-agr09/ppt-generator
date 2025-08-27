@@ -41,7 +41,77 @@ LLM_PROVIDERS = {
     "gemini": {
         "model": "gemini-1.5-flash",
     },
+    "aipipe": {
+        "url": "https://aipipe.org/openrouter/v1/chat/completions",
+        "model": "GPT-4o",                    
+    },
 }
+
+# --- User-friendly error messages ---
+USER_FRIENDLY_ERRORS = {
+    # Authentication errors
+    "invalid_api_key": "Invalid API key. Please check your API key and try again.",
+    "authentication_failed": "Authentication failed. Please verify your API credentials.",
+    
+    # Credit/billing errors
+    "insufficient_credits": "Your account has insufficient credits. Please add credits to your API account.",
+    "credit_balance": "Your API account balance is too low. Please add credits to continue.",
+    "billing": "Billing issue detected. Please check your account billing settings.",
+    "payment_required": "Payment required. Please update your billing information.",
+    
+    # Rate limiting
+    "rate_limit": "Too many requests. Please wait a moment and try again.",
+    "quota_exceeded": "API quota exceeded. Please try again later or upgrade your plan.",
+    
+    # Network errors
+    "timeout": "Request timed out. Please check your internet connection and try again.",
+    "network_error": "Network connection error. Please check your internet connection.",
+    
+    # Server errors
+    "server_error": "Service temporarily unavailable. Please try again in a few moments.",
+    "service_unavailable": "The API service is currently unavailable. Please try again later.",
+    
+    # General errors
+    "invalid_request": "Invalid request. Please check your input and try again.",
+    "permission_denied": "Permission denied. Please check your account permissions.",
+    
+    # Default fallback
+    "default": "An unexpected error occurred. Please try again or contact support if the problem persists."
+}
+
+def get_user_friendly_error(error_text: str) -> str:
+    """
+    Convert technical error messages to user-friendly English messages.
+    """
+    error_text_lower = error_text.lower()
+    
+    # Check for specific error patterns
+    if any(keyword in error_text_lower for keyword in ["invalid api key", "authentication", "unauthorized", "401", "403"]):
+        return USER_FRIENDLY_ERRORS["invalid_api_key"]
+    
+    elif any(keyword in error_text_lower for keyword in ["credit", "balance", "billing", "payment", "insufficient"]):
+        return USER_FRIENDLY_ERRORS["insufficient_credits"]
+    
+    elif any(keyword in error_text_lower for keyword in ["rate limit", "too many requests", "quota", "429"]):
+        return USER_FRIENDLY_ERRORS["rate_limit"]
+    
+    elif any(keyword in error_text_lower for keyword in ["timeout", "timed out"]):
+        return USER_FRIENDLY_ERRORS["timeout"]
+    
+    elif any(keyword in error_text_lower for keyword in ["network", "connection"]):
+        return USER_FRIENDLY_ERRORS["network_error"]
+    
+    elif any(keyword in error_text_lower for keyword in ["server error", "service unavailable", "503", "502", "500"]):
+        return USER_FRIENDLY_ERRORS["server_error"]
+    
+    elif any(keyword in error_text_lower for keyword in ["invalid request", "bad request", "400"]):
+        return USER_FRIENDLY_ERRORS["invalid_request"]
+    
+    elif any(keyword in error_text_lower for keyword in ["permission", "forbidden"]):
+        return USER_FRIENDLY_ERRORS["permission_denied"]
+    
+    # Default fallback
+    return USER_FRIENDLY_ERRORS["default"]
 
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request):
@@ -79,7 +149,7 @@ def clean_inline(s: str) -> str:
 # ---------------------------
 async def call_llm(provider: str, api_key: str, prompt: str, guidance: str = "") -> str:
     if provider not in LLM_PROVIDERS:
-        raise HTTPException(status_code=400, detail=f"Unsupported LLM provider: {provider}")
+        raise HTTPException(status_code=400, detail="Unsupported LLM provider")
 
     config = LLM_PROVIDERS[provider]
 
@@ -110,38 +180,86 @@ Slide 2: Slide Title
     if guidance:
         system_prompt += f"\nAdditional guidance:\n{guidance}\n"
 
-    if provider == "openai":
-        headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
-        messages = [{"role": "system", "content": system_prompt},
-                    {"role": "user", "content": prompt}]
-        data = {"model": config["model"], "messages": messages, "temperature": 0.4}
+    try:
+        if provider == "openai":
+            headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
+            messages = [{"role": "system", "content": system_prompt},
+                        {"role": "user", "content": prompt}]
+            data = {"model": config["model"], "messages": messages, "temperature": 0.4}
 
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            r = await client.post(config["url"], json=data, headers=headers)
-            r.raise_for_status()
-            return r.json()["choices"][0]["message"]["content"]
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                r = await client.post(config["url"], json=data, headers=headers)
+                r.raise_for_status()
+                return r.json()["choices"][0]["message"]["content"]
+            
+        elif provider == "anthropic":
+            # Validate API key format
+            if not api_key.startswith("sk-ant-"):
+                raise HTTPException(status_code=400, detail="Invalid Anthropic API key format. Should start with 'sk-ant-'")
+            
+            headers = {
+                "Content-Type": "application/json",
+                "x-api-key": api_key,
+                "anthropic-version": config.get("version", "2023-06-01")
+            }
+            
+            data = {
+                "model": config["model"],
+                "max_tokens": 4000,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": f"{system_prompt}\n\n{prompt}"
+                    }
+                ],
+                "temperature": 0.4
+            }
+            
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                r = await client.post(config["url"], json=data, headers=headers)
+                r.raise_for_status()
+                res = r.json()
+                return res["content"][0]["text"]
 
-    elif provider == "anthropic":
-        headers = {"Content-Type": "application/json", "x-api-key": api_key, "anthropic-version": config["version"]}
-        data = {
-            "model": config["model"],
-            "max_tokens": 4000,
-            "messages": [{"role": "user", "content": f"{system_prompt}\n\n{prompt}"}],
-        }
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            r = await client.post(config["url"], json=data, headers=headers)
-            r.raise_for_status()
-            return r.json()["content"][0]["text"]
-
-    elif provider == "gemini":
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel(
-            model_name=config["model"],
-            generation_config={"temperature": 0.3, "max_output_tokens": 4000},
-            safety_settings=[{"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"}],
-        )
-        resp = model.generate_content(f"{system_prompt}\n\n{prompt}", request_options={"timeout": 60})
-        return getattr(resp, "text", "").strip() or "Slide 1: Untitled\nSubtitle:"
+        elif provider == "gemini":
+            genai.configure(api_key=api_key)
+            model = genai.GenerativeModel(
+                model_name=config["model"],
+                generation_config={"temperature": 0.3, "max_output_tokens": 4000},
+                safety_settings=[{"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_MEDIUM_AND_ABOVE"}],
+            )
+            resp = model.generate_content(f"{system_prompt}\n\n{prompt}", request_options={"timeout": 60})
+            return getattr(resp, "text", "").strip() or "Slide 1: Untitled\nSubtitle:"
+        
+        elif provider == "aipipe":
+            headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+            data = {
+                "model": config["model"],
+                "messages": [{"role": "system", "content": system_prompt},
+                            {"role": "user", "content": prompt}],
+            }
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                r = await client.post(config["url"], json=data, headers=headers)
+                r.raise_for_status()
+                result = r.json()
+                return result.get("choices", [{}])[0].get("message", {}).get("content", "Slide 1: Untitled")
+    
+    except httpx.HTTPStatusError as e:
+        # Log technical details to console
+        error_detail = e.response.text if hasattr(e.response, 'text') else str(e)
+        logger.error(f"{provider.upper()} API technical error: {error_detail}")
+        
+        # Get user-friendly message
+        user_message = get_user_friendly_error(error_detail)
+        raise HTTPException(status_code=400, detail=user_message)
+        
+    except Exception as e:
+        # Log technical details to console
+        logger.error(f"{provider.upper()} request failed: {str(e)}")
+        
+        # Get user-friendly message
+        user_message = get_user_friendly_error(str(e))
+        raise HTTPException(status_code=500, detail=user_message)
 
 # ---------------------------
 # Parsing LLM output
@@ -351,7 +469,7 @@ async def convert(
     api_key: str = Form(""),
 ):
     if not content or not content.strip():
-        raise HTTPException(status_code=400, detail="Provide content in text area")
+        raise HTTPException(status_code=400, detail="Please provide content in the text area")
 
     # Load template
     if template_file:

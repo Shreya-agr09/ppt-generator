@@ -483,16 +483,23 @@ async def structured_markdown_to_slides(prs: Presentation, text_input: str, guid
 @app.post("/api/convert")
 async def convert(
     content: str = Form(None),
+    markdown_file: UploadFile = File(None),
     template_file: UploadFile = File(None),
     template_id: str = Form(None),
     guidance: str = Form(""),
     llm_provider: str = Form("openai"),
     api_key: str = Form(""),
 ):
-    if not content or not content.strip():
-        raise HTTPException(status_code=400, detail="Please provide content in the text area")
+    # Handle content from either text box or markdown file
+    if (not content or not content.strip()) and not markdown_file:
+        raise HTTPException(status_code=400, detail="Please provide content in the text area or upload a Markdown file")
 
-    # Load template
+    # If markdown file uploaded, read its content
+    if markdown_file:
+        file_bytes = await markdown_file.read()
+        content = file_bytes.decode("utf-8")
+
+    # Load template (pptx file or builtin template)
     if template_file:
         tmp_template = tempfile.NamedTemporaryFile(delete=False, suffix=".pptx")
         with open(tmp_template.name, "wb") as buffer:
@@ -512,8 +519,10 @@ async def convert(
         except Exception:
             pass
 
+    # Convert content → slides
     prs = await structured_markdown_to_slides(prs, content, guidance, llm_provider, api_key)
 
+    # Save and return file
     output_file = tempfile.NamedTemporaryFile(delete=False, suffix=".pptx")
     prs.save(output_file.name)
     return FileResponse(
@@ -521,6 +530,7 @@ async def convert(
         media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
         filename="slides.pptx",
     )
+
 
 @app.get("/health")
 def health():

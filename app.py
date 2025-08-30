@@ -506,16 +506,19 @@ def health():
     return {"ok": True}
 
 if __name__ == "__main__":
-    import os
-    from pyngrok import ngrok
+    # import os
+    # from pyngrok import ngrok
+    # import uvicorn
+    
+    # port = 8001  # Use a different port for second project
+    # reserved_domain = "grubworm-innocent-wombat.ngrok-free.app"
+    
+    # # Start ngrok tunnel
+    # public_url = ngrok.connect(addr=port, hostname=reserved_domain)
+    # print(f"🚀 ngrok tunnel available at: {public_url.public_url}")
+    
+    # # Run FastAPI app
+    # uvicorn.run(app, host="0.0.0.0", port=port)
+
     import uvicorn
-    
-    port = 8001  # Use a different port for second project
-    reserved_domain = "grubworm-innocent-wombat.ngrok-free.app"
-    
-    # Start ngrok tunnel
-    public_url = ngrok.connect(addr=port, hostname=reserved_domain)
-    print(f"🚀 ngrok tunnel available at: {public_url.public_url}")
-    
-    # Run FastAPI app
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    uvicorn.run("app:app", host="0.0.0.0", port=int(os.environ.get("PORT", "8001")), reload=False)

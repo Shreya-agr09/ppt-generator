@@ -359,6 +359,19 @@ def parse_llm_response(response_text: str) -> List[Dict[str, Any]]:
 
     return slides
 
+def api_key_required(text: str, guidance: str) -> bool:
+    """
+    Decide if API key is required based on Hybrid Rule:
+    - If user provided guidance/tone → API required
+    - If text is long prose (> 3000 chars) → API required
+    - Else → API not required
+    """
+    if guidance.strip():
+        return True
+    if len(text) > 3000:
+        return True
+    return False
+
 # ---------------------------
 # Slide creation
 # ---------------------------
@@ -450,7 +463,15 @@ def create_slide(prs: Presentation, slide_data: Dict[str, Any], slide_index: int
 # ---------------------------
 async def structured_markdown_to_slides(prs: Presentation, text_input: str, guidance: str,
                                         llm_provider: str, api_key: str) -> Presentation:
-    llm_response = await call_llm(llm_provider, api_key, text_input, guidance)
+    require_api = api_key_required(text_input, guidance)
+
+    if require_api:
+        if not api_key.strip():
+            raise HTTPException(status_code=400, detail="API key required: text is too large or guidance was provided.")
+        llm_response = await call_llm(llm_provider, api_key, text_input, guidance)
+    else:
+        llm_response = text_input
+
     slides_data = parse_llm_response(llm_response)
     for i, slide_data in enumerate(slides_data):
         create_slide(prs, slide_data, i)

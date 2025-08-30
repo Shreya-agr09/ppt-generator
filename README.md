@@ -20,6 +20,9 @@ A lightweight Python-based tool to generate PowerPoint presentations from Markdo
 - Offers a FastAPI-driven interface supporting file uploads and template selection.
 - Utilizes Jinja2 templates and `python-pptx` for slide generation.
 - Built with a clean templating system (`templates/`) and organized helper modules (`utils/`).
+- API not present → works **only for Markdown files** (no AI structuring).  
+- For **plain text input** → API key is **compulsory**.  
+- For **Markdown files** → API key is **optional** (works even without AI)
 
 ---
 
@@ -39,5 +42,27 @@ A lightweight Python-based tool to generate PowerPoint presentations from Markdo
   pip install -r requirements.txt```
 
 ## Running locally
+```bash
 run uvicorn app:app --reload
-on ngrock add your auth token and domain and run python app.py
+on ngrock add your auth token and domain and run python app.py```
+
+### How It Works  
+
+- **Parsing Input**  
+  - Supports plain text, Markdown, or uploaded files.  
+  - Markdown headings → slide titles, subheadings/lists → bullet points.  
+  - Plain text is split into logical sections for slides.  
+  - If both text and file are given, the app merges content before parsing.  
+
+- **Mapping to Slides**  
+  - Each parsed block is mapped to a new slide or added as structured content.  
+  - Ensures clean separation between title, body, and points.  
+
+- **Applying Templates**  
+  - Chosen PowerPoint template defines fonts, colors, and layout.  
+  - Content fills predefined placeholders for titles, bullets, and images.  
+  - Logos, backgrounds, and styles from the template ensure professional consistency.  
+
+- **Result**  
+  - Clear separation between **content (what to present)** and **template (how it looks)**.  
+  - Generates polished, branded slides automatically.  

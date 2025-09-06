@@ -20,6 +20,9 @@ A lightweight Python-based tool to generate PowerPoint presentations from Markdo
 - Offers a FastAPI-driven interface supporting file uploads and template selection.
 - Utilizes Jinja2 templates and `python-pptx` for slide generation.
 - Built with a clean templating system (`templates/`) and organized helper modules (`utils/`).
+- API not present → works **only for Markdown files** (no AI structuring).  
+- For **plain text input** → API key is **compulsory**.  
+- For **Markdown files** → API key is **optional** (works even without AI)
 
 ---
 

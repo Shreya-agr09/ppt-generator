@@ -39,5 +39,20 @@ A lightweight Python-based tool to generate PowerPoint presentations from Markdo
   pip install -r requirements.txt```
 
 ## Running locally
-run uvicorn app:app --reload
+uvicorn app:app --host 0.0.0.0 --port 8001 --reload
 on ngrock add your auth token and domain and run python app.py
+
+## 📸 Screenshots
+
+### 1. Interface
+![Interface](assets/localhost_8001_.png)
+
+## 📽️ Demo Video
+
+You can watch the full demo here:  
+👉 [Click to Watch on Google Drive](https://drive.google.com/file/d/1Faj4mJyI3gfEXZm5VfC2FlJMnMIk4DpW/view?usp=sharing)
+
+## 📂 Generated Presentations
+
+All generated PPT files are stored in this shared folder:  
+👉 [View PPTs on Google Drive](https://drive.google.com/drive/folders/1dKNXHqDuFlCYUjU7KtFSJSuJjDLpXfqq?usp=sharing)

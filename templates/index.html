@@ -1,162 +1,194 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Text to PowerPoint Converter</title>
     <style>
+        @import url(https://fonts.googleapis.com/css2?family=Roboto&display=swap);
+        @import url(https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined);
+
         :root {
-            --primary-color: #4285f4;
+            --primary-color: #E779C1;
             --secondary-color: #34a853;
             --accent-color: #ea4335;
             --light-gray: #f5f5f5;
             --dark-gray: #444;
         }
-        
+
         * {
             box-sizing: border-box;
             margin: 0;
             padding: 0;
         }
-        
+
         body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            font-family: 'Roboto', Tahoma, Geneva, Verdana, sans-serif;
             line-height: 1.6;
             color: #333;
-            background-color: #f9f9f9;
+            background-color: #0f0f0f;
             padding: 20px;
+            min-height: 100vh;
+            background: linear-gradient(to bottom, #0a0a0a, #1a1a1a);
         }
-        
+
         .container {
             max-width: 1000px;
             margin: 0 auto;
-            background: white;
-            border-radius: 10px;
-            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+            background: rgba(25, 25, 25, 0.9);
+            border-radius: 16px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
             padding: 30px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
         }
-        
+
         header {
             text-align: center;
             margin-bottom: 30px;
             padding-bottom: 20px;
-            border-bottom: 1px solid #eee;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
         }
-        
+
         h1 {
             color: var(--primary-color);
             margin-bottom: 10px;
+            font-size: 2.5rem;
+            background: linear-gradient(to right, var(--primary-color), #a855f7);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            font-weight: bold;
         }
-        
+
         .subtitle {
-            color: var(--dark-gray);
+            color: #d1d1d1;
             font-weight: normal;
+            font-size: 1.1rem;
         }
-        
+
         .form-group {
             margin-bottom: 20px;
         }
-        
+
         label {
             display: block;
             margin-bottom: 8px;
             font-weight: 600;
-            color: var(--dark-gray);
+            color: #d1d1d1;
         }
-        
-        textarea, input[type="text"], select {
+
+        textarea,
+        input[type="text"],
+        select {
             width: 100%;
-            padding: 12px;
-            border: 1px solid #ddd;
-            border-radius: 5px;
+            padding: 15px;
+            border: 1px solid #555;
+            border-radius: 8px;
             font-size: 16px;
-            transition: border 0.3s;
+            transition: all 0.3s;
+            background-color: #2d2d2d;
+            color: #ffffff;
         }
-        
-        textarea:focus, input[type="text"]:focus, select:focus {
+
+        textarea:focus,
+        input[type="text"]:focus,
+        select:focus {
             border-color: var(--primary-color);
             outline: none;
+            box-shadow: 0 0 0 3px rgba(231, 121, 193, 0.3);
+            background-color: #333333;
+            color: #ffffff;
         }
-        
+
         textarea {
             min-height: 200px;
             resize: vertical;
         }
-        
+
         .file-upload {
-            border: 2px dashed #ddd;
-            border-radius: 5px;
+            border: 2px dashed #555;
+            border-radius: 8px;
             padding: 20px;
             text-align: center;
             margin-bottom: 20px;
-            transition: border 0.3s;
+            transition: all 0.3s;
+            background-color: #2a2a2a;
         }
-        
+
         .file-upload:hover {
             border-color: var(--primary-color);
+            background-color: #2f2f2f;
         }
-        
+
         .file-upload p {
             margin-bottom: 10px;
-            color: var(--dark-gray);
+            color: #ffffff;
+            font-weight: 500;
         }
-        
+
+        .file-upload input[type="file"] {
+            width: 100%;
+            padding: 10px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 6px;
+            color: #ffffff;
+            cursor: pointer;
+        }
+
         .btn {
-            background-color: var(--primary-color);
+            background: linear-gradient(to right, var(--primary-color), #a855f7);
             color: white;
             border: none;
             padding: 12px 20px;
-            border-radius: 5px;
+            border-radius: 8px;
             cursor: pointer;
             font-size: 16px;
             font-weight: 600;
-            transition: background 0.3s;
+            transition: all 0.3s;
         }
-        
+
         .btn:hover {
-            background-color: #3367d6;
+            opacity: 0.9;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
         }
-        
+
         .btn-convert {
-            background-color: var(--secondary-color);
             display: block;
             width: 100%;
             margin-top: 20px;
             padding: 15px;
             font-size: 18px;
         }
-        
-        .btn-convert:hover {
-            background-color: #2d9249;
-        }
-        
+
         .alert {
             padding: 15px;
-            border-radius: 5px;
+            border-radius: 8px;
             margin-bottom: 20px;
             display: none;
         }
-        
+
         .alert-error {
-            background-color: #ffebee;
-            color: var(--accent-color);
-            border: 1px solid #ffcdd2;
+            background-color: rgba(255, 0, 0, 0.1);
+            color: #ff6b6b;
+            border: 1px solid rgba(255, 0, 0, 0.2);
         }
-        
+
         .alert-success {
-            background-color: #e8f5e9;
-            color: var(--secondary-color);
-            border: 1px solid #c8e6c9;
+            background-color: rgba(0, 255, 0, 0.1);
+            color: #6bff6b;
+            border: 1px solid rgba(0, 255, 0, 0.2);
         }
-        
+
         .loading {
             display: none;
             text-align: center;
             margin: 20px 0;
         }
-        
+
         .spinner {
-            border: 4px solid rgba(0, 0, 0, 0.1);
+            border: 4px solid rgba(255, 255, 255, 0.1);
             border-left: 4px solid var(--primary-color);
             border-radius: 50%;
             width: 30px;
@@ -164,49 +196,122 @@
             animation: spin 1s linear infinite;
             margin: 0 auto;
         }
-        
+
         @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
+                transform: rotate(360deg);
+            }
         }
-        
+
         .instructions {
-            background-color: var(--light-gray);
+            background-color: #2a2a2a;
             padding: 15px;
-            border-radius: 5px;
+            border-radius: 8px;
             margin-bottom: 20px;
+            border-left: 4px solid var(--primary-color);
         }
-        
+
         .instructions h3 {
             margin-bottom: 10px;
             color: var(--primary-color);
         }
-        
+
         .instructions ul {
             margin-left: 20px;
+            color: #d1d1d1;
         }
-        
+
+        .instructions li {
+            margin-bottom: 8px;
+        }
+
         footer {
             text-align: center;
             margin-top: 30px;
-            color: var(--dark-gray);
+            color: #888;
             font-size: 14px;
+            padding-top: 20px;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
         }
-        
+
         @media (max-width: 768px) {
             .container {
                 padding: 20px;
             }
         }
+
+        /* Additional styles for the new design */
+        .material-symbols-outlined {
+            font-variation-settings:
+                'FILL' 0,
+                'wght' 400,
+                'GRAD' 0,
+                'opsz' 24
+        }
+
+        .gradient-bg {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: -1;
+            opacity: 0.1;
+        }
+
+        .blob {
+            position: absolute;
+            border-radius: 50%;
+            filter: blur(40px);
+        }
+
+        .blob-1 {
+            width: 300px;
+            height: 300px;
+            background: var(--primary-color);
+            top: -150px;
+            left: -150px;
+        }
+
+        .blob-2 {
+            width: 200px;
+            height: 200px;
+            background: #a855f7;
+            bottom: -100px;
+            right: -100px;
+        }
+
+        /* Placeholder text color */
+        ::placeholder {
+            color: #aaaaaa;
+        }
+
+        :-ms-input-placeholder {
+            color: #aaaaaa;
+        }
+
+        ::-ms-input-placeholder {
+            color: #aaaaaa;
+        }
     </style>
 </head>
+
 <body>
+    <div class="gradient-bg">
+        <div class="blob blob-1"></div>
+        <div class="blob blob-2"></div>
+    </div>
+
     <div class="container">
         <header>
             <h1>Text to PowerPoint Converter</h1>
             <p class="subtitle">Transform your text into beautiful presentations with AI</p>
         </header>
-        
+
         <div class="instructions">
             <h3>How to use:</h3>
             <ul>
@@ -217,20 +322,22 @@
                 <li>Click "Convert to PowerPoint" to generate your presentation</li>
             </ul>
         </div>
-        
+
         <div id="alertBox" class="alert"></div>
-        
+
         <form id="conversionForm">
             <div class="form-group">
                 <label for="content">Your Text Content:</label>
-                <textarea id="content" name="content" placeholder="Paste your text or Markdown content here..."></textarea>
+                <textarea id="content" name="content"
+                    placeholder="Paste your text or Markdown content here..."></textarea>
             </div>
-            
+
             <div class="form-group">
                 <label for="guidance">Presentation Guidance (optional):</label>
-                <input type="text" id="guidance" name="guidance" placeholder="e.g., 'Create an investor pitch deck', 'Make it technical', 'Use a professional tone'">
+                <input type="text" id="guidance" name="guidance"
+                    placeholder="e.g., 'Create an investor pitch deck', 'Make it technical', 'Use a professional tone'">
             </div>
-            
+
             <div class="form-group">
                 <label for="llm_provider">Select LLM Provider:</label>
                 <select id="llm_provider" name="llm_provider">
@@ -240,46 +347,48 @@
                     <option value="anthropic">Anthropic</option>
                 </select>
             </div>
-            
+
             <div class="form-group">
                 <label for="api_key">API Key (only required if tone or plain text input):</label>
                 <input type="text" id="api_key" name="api_key" placeholder="Enter your API key if needed">
             </div>
-            
+
+
+
             <div class="form-group">
                 <label>Upload Files (optional):</label>
                 <div class="file-upload">
                     <p>Markdown File</p>
                     <input type="file" id="markdown_file" name="markdown_file" accept=".md,.txt">
                 </div>
-                
+
                 <div class="file-upload">
                     <p>PowerPoint Template (.pptx, .potx)</p>
                     <input type="file" id="template_file" name="template_file" accept=".pptx,.potx">
                 </div>
             </div>
-            
+
             <div class="loading" id="loadingIndicator">
                 <div class="spinner"></div>
                 <p>Processing your presentation... This may take a moment.</p>
             </div>
-            
+
             <button type="submit" class="btn btn-convert">Convert to PowerPoint</button>
         </form>
-        
+
         <footer>
             <p>Your API key is used only for processing (if needed) and is not stored on our servers.</p>
         </footer>
     </div>
 
     <script>
-        document.getElementById('conversionForm').addEventListener('submit', async function(e) {
+        document.getElementById('conversionForm').addEventListener('submit', async function (e) {
             e.preventDefault();
-            
+
             const alertBox = document.getElementById('alertBox');
             const loadingIndicator = document.getElementById('loadingIndicator');
             const convertButton = document.querySelector('.btn-convert');
-            
+
             const content = document.getElementById('content').value.trim();
             const markdownFile = document.getElementById('markdown_file').files[0];
             const guidance = document.getElementById('guidance').value.trim();
@@ -312,6 +421,7 @@
             formData.append('llm_provider', llmProvider);
             if (apiKey) formData.append('api_key', apiKey);
 
+
             const templateFile = document.getElementById('template_file').files[0];
             if (templateFile) formData.append('template_file', templateFile);
 
@@ -320,7 +430,7 @@
                     method: 'POST',
                     body: formData
                 });
-                
+
                 if (response.ok) {
                     const blob = await response.blob();
                     const url = window.URL.createObjectURL(blob);
@@ -331,7 +441,7 @@
                     document.body.appendChild(a);
                     a.click();
                     window.URL.revokeObjectURL(url);
-                    
+
                     showAlert(alertBox, 'Presentation generated successfully! Your download should start shortly.', 'success');
                 } else {
                     const errorData = await response.json();
@@ -344,16 +454,17 @@
                 convertButton.disabled = false;
             }
         });
-        
+
         function showAlert(alertBox, message, type) {
             alertBox.textContent = message;
             alertBox.className = `alert alert-${type}`;
             alertBox.style.display = 'block';
-            
+
             setTimeout(() => {
                 alertBox.style.display = 'none';
             }, 5000);
         }
     </script>
 </body>
+
 </html>

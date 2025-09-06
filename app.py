@@ -6,7 +6,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pptx import Presentation
 from pptx.util import Pt, Inches
-from pptx.enum.text import PP_ALIGN
+from pptx.enum.text import PP_ALIGN, MSO_AUTO_SIZE
 from pptx.dml.color import RGBColor
 import httpx
 import google.generativeai as genai
@@ -43,74 +43,47 @@ LLM_PROVIDERS = {
     },
     "aipipe": {
         "url": "https://aipipe.org/openrouter/v1/chat/completions",
-        "model": "GPT-4o",                    
+        "model": "GPT-4o",
     },
 }
 
 # --- User-friendly error messages ---
 USER_FRIENDLY_ERRORS = {
-    # Authentication errors
     "invalid_api_key": "Invalid API key. Please check your API key and try again.",
     "authentication_failed": "Authentication failed. Please verify your API credentials.",
-    
-    # Credit/billing errors
     "insufficient_credits": "Your account has insufficient credits. Please add credits to your API account.",
     "credit_balance": "Your API account balance is too low. Please add credits to continue.",
     "billing": "Billing issue detected. Please check your account billing settings.",
     "payment_required": "Payment required. Please update your billing information.",
-    
-    # Rate limiting
     "rate_limit": "Too many requests. Please wait a moment and try again.",
     "quota_exceeded": "API quota exceeded. Please try again later or upgrade your plan.",
-    
-    # Network errors
     "timeout": "Request timed out. Please check your internet connection and try again.",
     "network_error": "Network connection error. Please check your internet connection.",
-    
-    # Server errors
     "server_error": "Service temporarily unavailable. Please try again in a few moments.",
     "service_unavailable": "The API service is currently unavailable. Please try again later.",
-    
-    # General errors
     "invalid_request": "Invalid request. Please check your input and try again.",
     "permission_denied": "Permission denied. Please check your account permissions.",
-    
-    # Default fallback
     "default": "An unexpected error occurred. Please try again or contact support if the problem persists."
 }
 
 def get_user_friendly_error(error_text: str) -> str:
-    """
-    Convert technical error messages to user-friendly English messages.
-    """
     error_text_lower = error_text.lower()
-    
-    # Check for specific error patterns
-    if any(keyword in error_text_lower for keyword in ["invalid api key", "authentication", "unauthorized", "401", "403"]):
+    if any(k in error_text_lower for k in ["invalid api key", "authentication", "unauthorized", "401", "403"]):
         return USER_FRIENDLY_ERRORS["invalid_api_key"]
-    
-    elif any(keyword in error_text_lower for keyword in ["credit", "balance", "billing", "payment", "insufficient"]):
+    elif any(k in error_text_lower for k in ["credit", "balance", "billing", "payment", "insufficient"]):
         return USER_FRIENDLY_ERRORS["insufficient_credits"]
-    
-    elif any(keyword in error_text_lower for keyword in ["rate limit", "too many requests", "quota", "429"]):
+    elif any(k in error_text_lower for k in ["rate limit", "too many requests", "quota", "429"]):
         return USER_FRIENDLY_ERRORS["rate_limit"]
-    
-    elif any(keyword in error_text_lower for keyword in ["timeout", "timed out"]):
+    elif any(k in error_text_lower for k in ["timeout", "timed out"]):
         return USER_FRIENDLY_ERRORS["timeout"]
-    
-    elif any(keyword in error_text_lower for keyword in ["network", "connection"]):
+    elif any(k in error_text_lower for k in ["network", "connection"]):
         return USER_FRIENDLY_ERRORS["network_error"]
-    
-    elif any(keyword in error_text_lower for keyword in ["server error", "service unavailable", "503", "502", "500"]):
+    elif any(k in error_text_lower for k in ["server error", "service unavailable", "503", "502", "500"]):
         return USER_FRIENDLY_ERRORS["server_error"]
-    
-    elif any(keyword in error_text_lower for keyword in ["invalid request", "bad request", "400"]):
+    elif any(k in error_text_lower for k in ["invalid request", "bad request", "400"]):
         return USER_FRIENDLY_ERRORS["invalid_request"]
-    
-    elif any(keyword in error_text_lower for keyword in ["permission", "forbidden"]):
+    elif any(k in error_text_lower for k in ["permission", "forbidden"]):
         return USER_FRIENDLY_ERRORS["permission_denied"]
-    
-    # Default fallback
     return USER_FRIENDLY_ERRORS["default"]
 
 @app.get("/", response_class=HTMLResponse)
@@ -127,22 +100,17 @@ def index(request: Request):
 MD_BOLD = re.compile(r"\*\*")  # remove ** used for markdown bold
 
 def strip_leading_number(s: str) -> str:
-    # Removes "2 ", "2.", "2) " etc at the very start
     return re.sub(r"^\s*\d+[.)-]?\s*", "", s.strip())
 
 def strip_slide_prefix(s: str) -> str:
-    # Removes "Slide 2:" or "Slide:" at the start
     return re.sub(r"^\s*slide\s*\d*\s*:\s*", "", s, flags=re.IGNORECASE).strip()
 
 def strip_bullet_marker(s: str) -> str:
-    # Removes a single leading bullet marker "- ", "* ", or "• "
     return re.sub(r"^\s*[-*•]\s+", "", s).strip()
 
 def clean_inline(s: str) -> str:
-    # Remove ** markers, keep hyphens inside text, trim
     s = MD_BOLD.sub("", s)
     return s.strip()
-
 
 # ---------------------------
 # LLM Integration
@@ -186,35 +154,25 @@ Slide 2: Slide Title
             messages = [{"role": "system", "content": system_prompt},
                         {"role": "user", "content": prompt}]
             data = {"model": config["model"], "messages": messages, "temperature": 0.4}
-
             async with httpx.AsyncClient(timeout=60.0) as client:
                 r = await client.post(config["url"], json=data, headers=headers)
                 r.raise_for_status()
                 return r.json()["choices"][0]["message"]["content"]
-            
+
         elif provider == "anthropic":
-            # Validate API key format
             if not api_key.startswith("sk-ant-"):
                 raise HTTPException(status_code=400, detail="Invalid Anthropic API key format. Should start with 'sk-ant-'")
-            
             headers = {
                 "Content-Type": "application/json",
                 "x-api-key": api_key,
                 "anthropic-version": config.get("version", "2023-06-01")
             }
-            
             data = {
                 "model": config["model"],
                 "max_tokens": 4000,
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": f"{system_prompt}\n\n{prompt}"
-                    }
-                ],
+                "messages": [{"role": "user", "content": f"{system_prompt}\n\n{prompt}"}],
                 "temperature": 0.4
             }
-            
             async with httpx.AsyncClient(timeout=60.0) as client:
                 r = await client.post(config["url"], json=data, headers=headers)
                 r.raise_for_status()
@@ -230,34 +188,28 @@ Slide 2: Slide Title
             )
             resp = model.generate_content(f"{system_prompt}\n\n{prompt}", request_options={"timeout": 60})
             return getattr(resp, "text", "").strip() or "Slide 1: Untitled\nSubtitle:"
-        
+
         elif provider == "aipipe":
             headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
             data = {
                 "model": config["model"],
                 "messages": [{"role": "system", "content": system_prompt},
-                            {"role": "user", "content": prompt}],
+                             {"role": "user", "content": prompt}],
             }
             async with httpx.AsyncClient(timeout=60.0) as client:
                 r = await client.post(config["url"], json=data, headers=headers)
                 r.raise_for_status()
                 result = r.json()
                 return result.get("choices", [{}])[0].get("message", {}).get("content", "Slide 1: Untitled")
-    
+
     except httpx.HTTPStatusError as e:
-        # Log technical details to console
         error_detail = e.response.text if hasattr(e.response, 'text') else str(e)
         logger.error(f"{provider.upper()} API technical error: {error_detail}")
-        
-        # Get user-friendly message
         user_message = get_user_friendly_error(error_detail)
         raise HTTPException(status_code=400, detail=user_message)
-        
+
     except Exception as e:
-        # Log technical details to console
         logger.error(f"{provider.upper()} request failed: {str(e)}")
-        
-        # Get user-friendly message
         user_message = get_user_friendly_error(str(e))
         raise HTTPException(status_code=500, detail=user_message)
 
@@ -265,20 +217,13 @@ Slide 2: Slide Title
 # Parsing LLM output
 # ---------------------------
 def tokenize_slides(text: str) -> List[str]:
-    """Split into slide blocks. Prefer 'Slide N:' markers; fallback to blank lines."""
     text = text.replace("\r", "")
-    # Try "Slide X:" segmentation
     parts = re.split(r"(?mi)^\s*Slide\s*\d*\s*:\s*", text)
     if len(parts) > 1:
-        # re.split keeps text before the first match in parts[0] (possibly empty) and
-        # then each following part starts with the title line. Rebuild properly.
         blocks = []
         for part in parts[1:]:
-            # First line up to the first newline is the title; keep whole block
             blocks.append(part.strip())
         return blocks
-
-    # Fallback: split by double newlines
     return [blk.strip() for blk in re.split(r"\n\s*\n", text) if blk.strip()]
 
 def parse_llm_response(response_text: str) -> List[Dict[str, Any]]:
@@ -289,11 +234,7 @@ def parse_llm_response(response_text: str) -> List[Dict[str, Any]]:
         lines = [l.rstrip() for l in block.split("\n") if l.strip()]
         if not lines:
             continue
-
-        # Title is first line in block
         raw_title = lines[0]
-        # If we segmented by "Slide:", raw_title begins with the *actual* title;
-        # but also handle if user/LLM still wrote "Slide X: Title"
         title = clean_inline(strip_slide_prefix(strip_leading_number(raw_title)))
 
         content_items: List[Dict[str, Any]] = []
@@ -302,17 +243,13 @@ def parse_llm_response(response_text: str) -> List[Dict[str, Any]]:
         for line in lines[1:]:
             raw = line.strip()
 
-            # Subtitle
             if raw.lower().startswith("subtitle:"):
                 subtitle_text = clean_inline(raw.split(":", 1)[1])
                 content_items.append({"type": "subtitle", "text": subtitle_text})
                 continue
 
-            # Bullet detection (keep marker, then strip)
             if re.match(r"^[-*•]\s+", raw):
                 body = strip_bullet_marker(raw)
-
-                # Headline: detail split (use first colon only)
                 if ":" in body:
                     headline, detail = body.split(":", 1)
                     headline = clean_inline(strip_leading_number(headline))
@@ -324,21 +261,17 @@ def parse_llm_response(response_text: str) -> List[Dict[str, Any]]:
                 last_bullet_idx = len(content_items) - 1
                 continue
 
-            # Non-bullet line: treat as detail for previous bullet if any
             if last_bullet_idx is not None and content_items[last_bullet_idx]["type"] == "bullet":
                 extra = clean_inline(raw)
                 if extra:
-                    # Append to existing detail with a space
                     if content_items[last_bullet_idx]["detail"]:
                         content_items[last_bullet_idx]["detail"] += " " + extra
                     else:
                         content_items[last_bullet_idx]["detail"] = extra
                 continue
 
-            # Otherwise, paragraph
             content_items.append({"type": "paragraph", "text": clean_inline(strip_leading_number(raw))})
 
-        # Skip truly empty slides
         has_any = title or any(ci.get("text") or ci.get("title") for ci in content_items)
         if not has_any:
             continue
@@ -349,23 +282,15 @@ def parse_llm_response(response_text: str) -> List[Dict[str, Any]]:
             "type": "title" if i == 0 else "content",
         })
 
-    # Fallback if nothing parsed
     if not slides:
         slides = [{
             "title": "Presentation",
             "content": [{"type": "paragraph", "text": clean_inline(response_text)}],
             "type": "title",
         }]
-
     return slides
 
 def api_key_required(text: str, guidance: str) -> bool:
-    """
-    Decide if API key is required based on Hybrid Rule:
-    - If user provided guidance/tone → API required
-    - If text is long prose (> 3000 chars) → API required
-    - Else → API not required
-    """
     if guidance.strip():
         return True
     if len(text) > 3000:
@@ -375,31 +300,68 @@ def api_key_required(text: str, guidance: str) -> bool:
 # ---------------------------
 # Slide creation
 # ---------------------------
-def create_slide(prs: Presentation, slide_data: Dict[str, Any], slide_index: int = 0):
-    # Layouts: 0 = Title slide, 1 = Title+Content (common in most templates)
-    layout = prs.slide_layouts[0] if slide_index == 0 else prs.slide_layouts[1]
+def _set_autofit(tf):
+    # Shrink text to fit the textbox/placeholder
+    try:
+        tf.word_wrap = True
+    except Exception:
+        pass
+    try:
+        tf.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
+    except Exception:
+        pass
+
+def create_slide(
+    prs: Presentation,
+    slide_data: Dict[str, Any],
+    slide_index: int,
+    *,
+    force_layout0: bool
+):
+    """
+    If force_layout0=True -> always use layout 0 (same as first slide) so color/background match.
+    We then place our own text boxes for title/content to avoid missing placeholders.
+    """
+    layout = prs.slide_layouts[0] if (force_layout0 or slide_index == 0) else prs.slide_layouts[1]
     slide = prs.slides.add_slide(layout)
 
-    # Title
+    for shape in list(slide.shapes):
+        if shape.is_placeholder:
+            sp = shape
+            slide.shapes._spTree.remove(sp._element)
+
+    # ---- Title handling ----
+    title_text = clean_inline(slide_data["title"])
+
     if slide.shapes.title:
-        slide.shapes.title.text = clean_inline(slide_data["title"])
-        for p in slide.shapes.title.text_frame.paragraphs:
+        slide.shapes.title.text = title_text
+        tf = slide.shapes.title.text_frame
+        for p in tf.paragraphs:
             for run in p.runs:
                 run.font.size = Pt(32 if slide_index == 0 else 28)
-        # For non-first slides, ensure title is near top (works across templates)
         if slide_index > 0:
-            slide.shapes.title.top = Inches(0.3)
-            slide.shapes.title.left = Inches(0.5)
-            slide.shapes.title.width = Inches(9)
+            # Reposition title near top for consistent layout even if layout0
+            slide.shapes.title.top = Inches(0.35)
+            slide.shapes.title.left = Inches(0.6)
+            slide.shapes.title.width = Inches(9.0)
             slide.shapes.title.height = Inches(0.9)
+        _set_autofit(slide.shapes.title.text_frame)
+    else:
+        # If there is no title placeholder, create one
+        title_box = slide.shapes.add_textbox(Inches(0.6), Inches(0.35), Inches(9.0), Inches(0.9))
+        tf = title_box.text_frame
+        tf.clear()
+        p = tf.paragraphs[0]
+        p.text = title_text
+        p.font.size = Pt(28)
+        p.font.bold = True
+        _set_autofit(tf)
 
-    # Content: handle subtitle on slide 1; bullets/paragraphs on others
+    # ---- Slide 1 subtitle handling ----
     if slide_index == 0:
-        # Subtitle
         subtitle_items = [c for c in slide_data["content"] if c["type"] == "subtitle"]
         if subtitle_items:
             sub_text = subtitle_items[0]["text"]
-            # Try placeholder[1], else add a textbox
             subtitle_shape = None
             try:
                 if len(slide.placeholders) > 1 and slide.placeholders[1].has_text_frame:
@@ -408,30 +370,25 @@ def create_slide(prs: Presentation, slide_data: Dict[str, Any], slide_index: int
                 subtitle_shape = None
 
             if subtitle_shape is None:
-                subtitle_shape = slide.shapes.add_textbox(Inches(1.0), Inches(3.5), Inches(8.0), Inches(1.0))
+                subtitle_shape = slide.shapes.add_textbox(Inches(1.0), Inches(3.5), Inches(8.0), Inches(1.2))
 
             tf = subtitle_shape.text_frame
             tf.clear()
-            # Always write the first paragraph into the existing paragraph after clear()
             p = tf.paragraphs[0]
             p.text = sub_text
             p.alignment = PP_ALIGN.CENTER
             for run in p.runs:
                 run.font.size = Pt(20)
-            return slide  # done with slide 1
+            _set_autofit(tf)
+        return slide
 
-    # Slides 2+
-    # Find a content placeholder with a text frame; else create one
-    content_shape = None
-    for ph in slide.placeholders:
-        if ph != slide.shapes.title and ph.has_text_frame:
-            content_shape = ph
-            break
-    if content_shape is None:
-        content_shape = slide.shapes.add_textbox(Inches(0.8), Inches(1.5), Inches(8.4), Inches(4.2))
-
-    tf = content_shape.text_frame
+    # ---- Slides 2+ content area ----
+    # We will always create our own content textbox so every slide looks identical across templates.
+    content_box = slide.shapes.add_textbox(Inches(0.9), Inches(1.5), Inches(8.2), Inches(4.3))
+    tf = content_box.text_frame
     tf.clear()
+    _set_autofit(tf)
+
     first_para = True
 
     def add_para(text: str, level: int, *, bold=False, size=Pt(18), color: RGBColor | None = None):
@@ -461,8 +418,15 @@ def create_slide(prs: Presentation, slide_data: Dict[str, Any], slide_index: int
 # ---------------------------
 # Main pipeline
 # ---------------------------
-async def structured_markdown_to_slides(prs: Presentation, text_input: str, guidance: str,
-                                        llm_provider: str, api_key: str) -> Presentation:
+async def structured_markdown_to_slides(
+    prs: Presentation,
+    text_input: str,
+    guidance: str,
+    llm_provider: str,
+    api_key: str,
+    *,
+    template_selected: bool
+) -> Presentation:
     require_api = api_key_required(text_input, guidance)
 
     if require_api:
@@ -473,8 +437,10 @@ async def structured_markdown_to_slides(prs: Presentation, text_input: str, guid
         llm_response = text_input
 
     slides_data = parse_llm_response(llm_response)
+
+    # If template was chosen/uploaded, force every slide to use layout 0 so the background/design matches slide 1
     for i, slide_data in enumerate(slides_data):
-        create_slide(prs, slide_data, i)
+        create_slide(prs, slide_data, i, force_layout0=template_selected)
     return prs
 
 # ---------------------------
@@ -494,10 +460,12 @@ async def convert(
     if (not content or not content.strip()) and not markdown_file:
         raise HTTPException(status_code=400, detail="Please provide content in the text area or upload a Markdown file")
 
-    # If markdown file uploaded, read its content
     if markdown_file:
         file_bytes = await markdown_file.read()
         content = file_bytes.decode("utf-8")
+
+    prs: Presentation
+    template_selected = False
 
     # Load template (pptx file or builtin template)
     if template_file:
@@ -505,22 +473,26 @@ async def convert(
         with open(tmp_template.name, "wb") as buffer:
             shutil.copyfileobj(template_file.file, buffer)
         prs = Presentation(tmp_template.name)
+        template_selected = True
     elif template_id and template_id in BUILTIN_TEMPLATES and os.path.exists(BUILTIN_TEMPLATES[template_id]):
         prs = Presentation(BUILTIN_TEMPLATES[template_id])
+        template_selected = True
     else:
         prs = Presentation()
 
-    # Remove default blank slide if present
-    if prs.slides:
-        try:
+    # Remove the initial default slide if present (many templates include one blank/title slide)
+    try:
+        if len(prs.slides) > 0:
             r_id = prs.slides._sldIdLst[0].rId
             prs.part.drop_rel(r_id)
             del prs.slides._sldIdLst[0]
-        except Exception:
-            pass
+    except Exception:
+        pass
 
-    # Convert content → slides
-    prs = await structured_markdown_to_slides(prs, content, guidance, llm_provider, api_key)
+    # Convert content → slides (force layout0 if a template is selected so all slides match)
+    prs = await structured_markdown_to_slides(
+        prs, content, guidance, llm_provider, api_key, template_selected=template_selected
+    )
 
     # Save and return file
     output_file = tempfile.NamedTemporaryFile(delete=False, suffix=".pptx")
@@ -531,25 +503,10 @@ async def convert(
         filename="slides.pptx",
     )
 
-
 @app.get("/health")
 def health():
     return {"ok": True}
 
 if __name__ == "__main__":
-    # import os
-    # from pyngrok import ngrok
-    # import uvicorn
-    
-    # port = 8001  # Use a different port for second project
-    # reserved_domain = "grubworm-innocent-wombat.ngrok-free.app"
-    
-    # # Start ngrok tunnel
-    # public_url = ngrok.connect(addr=port, hostname=reserved_domain)
-    # print(f"🚀 ngrok tunnel available at: {public_url.public_url}")
-    
-    # # Run FastAPI app
-    # uvicorn.run(app, host="0.0.0.0", port=port)
-
     import uvicorn
     uvicorn.run("app:app", host="0.0.0.0", port=int(os.environ.get("PORT", "8001")), reload=False)
